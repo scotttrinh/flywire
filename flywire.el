@@ -1,12 +1,12 @@
-;;; emacs-driver.el --- "Arms and eyes" for automated agents -*- lexical-binding: t; -*-
+;;; flywire.el --- Arms and eyes for automated agents -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2025 Scott Trinh
 
 ;; Author: Scott Trinh <scott@scotttrinh.com>
-;; Version: 0.1.0
-;; Package-Requires: ((emacs "28.1"))
+;; Version: 1.0.0
+;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: processes, tools, extensions
-;; URL: https://github.com/scotttrinh/emacs-driver
+;; URL: https://github.com/scotttrinh/flywire
 
 ;; This file is not part of GNU Emacs.
 
@@ -27,7 +27,7 @@
 
 ;;; Commentary:
 
-;; Public surface for the emacs-driver package. This module coordinates
+;; Public surface for the flywire package.  This module coordinates
 ;; snapshots and tool execution so an external agent can see Emacs state
 ;; and drive it via scripted steps.
 
@@ -35,46 +35,46 @@
 
 (require 'cl-lib)
 (require 'json)
-(require 'emacs-driver-snapshot)
-(require 'emacs-driver-action)
-(require 'emacs-driver-async)
+(require 'flywire-snapshot)
+(require 'flywire-action)
+(require 'flywire-async)
 
-(defun emacs-driver--execute-step (step)
+(defun flywire--execute-step (step)
   "Execute STEP, which comes from a parsed JSON instruction.
-STEP should be an alist with at least an `action` entry." 
+STEP should be an alist with at least an `action` entry."
   (pcase (alist-get 'action step nil nil #'string=)
     ("type"
-     (emacs-driver-push-input (alist-get 'text step)))
+     (flywire-action-push-input (alist-get 'text step)))
     ("key"
-     (emacs-driver-simulate-keys (alist-get 'chord step)))
+     (flywire-action-simulate-keys (alist-get 'chord step)))
     ("command"
-     (emacs-driver-execute-tool "run_command"
-                                `((name . ,(alist-get 'name step)))))
+     (flywire-action-execute-tool "run_command"
+                                       `((name . ,(alist-get 'name step)))))
     (_
-     (message "Unknown emacs-driver action: %S" step))))
+     (error "Flywire: unknown action %S" step))))
 
 ;;;###autoload
-(defun emacs-driver-do (instruction-json)
+(defun flywire-do (instruction-json)
   "Execute INSTRUCTION-JSON and return a fresh snapshot plist.
-Instructions are JSON arrays of action objects. The function ensures
+Instructions are JSON arrays of action objects.  The function ensures
 inputs are queued before commands run, then returns
-`emacs-driver-get-snapshot` for the updated state." 
+`flywire-snapshot-get-snapshot` for the updated state."
   (let ((instructions (json-parse-string instruction-json :object-type 'alist :array-type 'list)))
     (dolist (step instructions)
-      (emacs-driver--execute-step step))
-    (emacs-driver-get-snapshot)))
+      (flywire--execute-step step))
+    (flywire-snapshot-get-snapshot)))
 
 ;;;###autoload
-(defun emacs-driver-do-async (instruction-json)
+(defun flywire-do-async (instruction-json)
   "Execute INSTRUCTION-JSON asynchronously.
-Returns 'started symbol immediately. The actions are scheduled on a timer.
-State updates will be pushed via `emacs-driver-output-handler`."
+Returns \\='started symbol immediately.  The actions are scheduled on a timer.
+State updates will be pushed via `flywire-async-output-handler`."
   (let ((instructions (json-parse-string instruction-json :object-type 'alist :array-type 'list)))
     (run-with-timer 0 nil
                     (lambda ()
                       (dolist (step instructions)
-                        (emacs-driver--execute-step step)))))
+                        (flywire--execute-step step)))))
   'started)
 
-(provide 'emacs-driver)
-;;; emacs-driver.el ends here
+(provide 'flywire)
+;;; flywire.el ends here

@@ -1,34 +1,34 @@
-;;; test/emacs-driver-property-test.el --- Property tests for emacs-driver -*- lexical-binding: t; -*-
+;;; test/flywire-property-test.el --- Property tests for flywire -*- lexical-binding: t; -*-
 
 (require 'propcheck)
-(require 'emacs-driver)
+(require 'flywire)
 
-(propcheck-deftest emacs-driver-prop-push-input ()
+(propcheck-deftest flywire-prop-push-input ()
   "Pushing any ASCII string input should queue corresponding events."
   (let ((s (propcheck-generate-string "input")))
     (setq unread-command-events nil)
-    (emacs-driver-push-input s)
+    (flywire-action-push-input s)
     (let ((expected (string-to-list s)))
       (propcheck-should (equal unread-command-events expected)))))
 
-(propcheck-deftest emacs-driver-prop-simulate-keys-simple ()
+(propcheck-deftest flywire-prop-simulate-keys-simple ()
   "Simulating simple alphanumeric strings should behave like typing."
   (let ((s (propcheck-generate-string "keys")))
     ;; Only keep alphanumeric chars to ensure valid key sequence
     (setq s (replace-regexp-in-string "[^a-zA-Z0-9]" "" s))
     (when (not (string-empty-p s))
       (setq unread-command-events nil)
-      (emacs-driver-simulate-keys s)
+      (flywire-action-simulate-keys s)
       (let ((expected (listify-key-sequence (kbd s))))
         (propcheck-should (equal unread-command-events expected))))))
 
-(ert-deftest emacs-driver-snapshot-content-empty-buffer ()
+(ert-deftest flywire-snapshot-content-empty-buffer ()
   "Snapshot of empty buffer should be empty string."
   (with-temp-buffer
-    (let ((content (emacs-driver--windowed-content)))
+    (let ((content (flywire-snapshot--windowed-content)))
       (should (string-equal content "")))))
 
-(propcheck-deftest emacs-driver-prop-snapshot-content-substring ()
+(propcheck-deftest flywire-prop-snapshot-content-substring ()
   "Windowed content should always be a valid substring of the full buffer."
   (let* ((radius (propcheck-generate-integer "radius" :min 1 :max 20))
          (lines (propcheck-generate-proper-list "lines" 
@@ -42,11 +42,11 @@
                        1
                      (propcheck-generate-integer "point" :min 1 :max max-pos)))
         
-        (let ((content (emacs-driver--windowed-content radius)))
+        (let ((content (flywire-snapshot--windowed-content radius)))
           ;; The snapshot content must be present in the full buffer
           (propcheck-should (string-search content full-text)))))))
 
-(propcheck-deftest emacs-driver-prop-windowed-content-radius ()
+(propcheck-deftest flywire-prop-windowed-content-radius ()
   "Windowed content should respect the radius constraint."
   (let* ((radius (propcheck-generate-integer "radius" :min 1 :max 10))
          (lines (propcheck-generate-proper-list "lines"
@@ -59,13 +59,13 @@
         (goto-char (if (= max-pos 1) 1
                      (propcheck-generate-integer "point" :min 1 :max max-pos)))
         
-        (let ((content (emacs-driver--windowed-content radius)))
+        (let ((content (flywire-snapshot--windowed-content radius)))
            (let ((num-lines (with-temp-buffer
                               (insert content)
                               (count-lines (point-min) (point-max)))))
              (propcheck-should (<= num-lines (1+ (* 2 radius))))))))))
 
-(propcheck-deftest emacs-driver-prop-minibuffer-state ()
+(propcheck-deftest flywire-prop-minibuffer-state ()
   "Minibuffer state construction should correctly split prompt and content."
   (let ((prompt (propcheck-generate-string "prompt"))
         (content (propcheck-generate-string "content")))
@@ -85,31 +85,31 @@
                   ((symbol-function 'minibuffer-contents)
                    (lambda () content)))
            
-           (let ((state (emacs-driver--build-minibuffer-state)))
+           (let ((state (flywire-snapshot--build-minibuffer-state)))
              (propcheck-should state)
              (propcheck-should (equal (plist-get state :active) t))
              (propcheck-should (string-equal (plist-get state :prompt) prompt))
              (propcheck-should (string-equal (plist-get state :contents) content))))))))
 
-(propcheck-deftest emacs-driver-prop-do-json-instructions ()
-  "emacs-driver-do should parse JSON and execute actions."
+(propcheck-deftest flywire-prop-do-json-instructions ()
+  "flywire-do should parse JSON and execute actions."
   (let ((txt (propcheck-generate-string "text")))
     (setq unread-command-events nil)
     (let* ((instruction `((action . "type") (text . ,txt)))
            (json-str (json-encode (vector instruction))))
        ;; Mock snapshot to avoid side effects or complex return values
-       (cl-letf (((symbol-function 'emacs-driver-get-snapshot) (lambda () '(:mock-snapshot t))))
-         (let ((result (emacs-driver-do json-str)))
+       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+         (let ((result (flywire-do json-str)))
            (propcheck-should (equal result '(:mock-snapshot t)))
            (propcheck-should (equal unread-command-events (string-to-list txt))))))))
 
-(propcheck-deftest emacs-driver-prop-simulate-keys-robustness ()
+(propcheck-deftest flywire-prop-simulate-keys-robustness ()
   "Simulating invalid keys should not crash."
   (let ((s (propcheck-generate-string "invalid-keys")))
     (setq unread-command-events nil)
     ;; This should catch errors internally and return nil or partial events
-    (emacs-driver-simulate-keys s)
+    (flywire-action-simulate-keys s)
     ;; We just assert we reached here without signal
     (propcheck-should t)))
 
-(provide 'test/emacs-driver-property-test)
+(provide 'test/flywire-property-test)

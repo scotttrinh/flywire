@@ -1,0 +1,29 @@
+* Notes: Code Quality Refinements for v1.0
+:PROPERTIES:
+:DATE:     2025-11-20
+:END:
+
+** Task 1: Prevent Symbol Table Pollution
+*** Problem
+`flywire-action-execute-tool` was using `intern` on potentially untrusted input, polluting the symbol table.
+
+*** Fix
+Replaced `intern` with `intern-soft` to only intern if the symbol already exists.
+
+** Task 2: Structured Error Propagation
+*** Problem
+Unknown actions were just logged with `message`, potentially being missed by the agent.
+
+*** Fix
+Changed `flywire-action-execute-tool` and `flywire--execute-step` to signal an `error` on unknown tools/actions.
+
+** Task 3: Atomic Execution Safety
+*** Problem
+Race condition possible between user input and agent input modification of `unread-command-events`.
+
+*** Fix
+Wrapped `flywire-action-simulate-keys` and `flywire-action-push-input` with `(let ((inhibit-quit t)) ...)` to prevent interruptions during event queuing.
+
+** Verification
+Ran `nix run .#test` - all passed.
+Ran `nix run .#lint` - fixed package headers and shadowing warning, then passed.

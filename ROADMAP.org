@@ -1,12 +1,12 @@
 * You are absolutely correct. Separating the * "Driver"* (the machinery that touches Emacs internals) from the * "Agent"* (the logic that talks to the LLM) is best practice here. It allows you to iterate on the mechanics of "computer use" without breaking your prompt logic, and vice versa.
 
-Let's call the driver package *~emacs-driver~*.
+Let's call the driver package *~flywire~*.
 
-Below is a comprehensive technical specification and roadmap you can feed to an AI coding agent to implement *~emacs-driver~*.
+Below is a comprehensive technical specification and roadmap you can feed to an AI coding agent to implement *~flywire~*.
 
 -----
 
-* Project Roadmap: *~emacs-driver~*
+* Project Roadmap: *~flywire~*
 ** Objective: Build a library that enables an asynchronous process to observe the Emacs state and execute interactive commands programmatically within the *current* user session.
 
 ** Architectural Philosophy:
@@ -20,10 +20,10 @@ Below is a comprehensive technical specification and roadmap you can feed to an 
 ** Phase 1: The Observer (State Serialization)
 *** Goal: Implement a function that returns the "Context Window" for the LLM.
 
-*** Task: Create ~emacs-driver-snapshot.el~.
+*** Task: Create ~flywire-snapshot.el~.
 
 *** Requirements:
-- Implement ~emacs-driver-get-snapshot~.
+- Implement ~flywire-get-snapshot~.
 - It must return a helper plist/struct containing:
   - *Buffer Info*: Name, major-mode, buffer-file-name (if any).
   - *Content (Windowed)*: Get text around the cursor (e.g., +/- 50 lines). *Do not dump the whole buffer if it is large.*
@@ -38,13 +38,13 @@ Below is a comprehensive technical specification and roadmap you can feed to an 
 ** Phase 2: The Atomic Executor (Blind Execution)
 *** Goal: Implement the "Pre-load" strategy for tool calls where the arguments are known in advance.
 
-*** Task: Create ~emacs-driver-action.el~.
+*** Task: Create ~flywire-action.el~.
 
 *** Requirements:
-- Implement ~emacs-driver-simulate-keys KEY-SEQUENCE~.
+- Implement ~flywire-simulate-keys KEY-SEQUENCE~.
   - This should parse a string like "C-x C-f" or "my-file.txt RET" into events.
   - *Mechanism*: Use ~(listify-key-sequence (kbd ...))~ and append to ~unread-command-events~.
-- Implement ~emacs-driver-execute-tool TOOL-NAME ARGS~.
+- Implement ~flywire-execute-tool TOOL-NAME ARGS~.
   - *Tool: ~run_command~*: Accepts ~command_name~ (string). Uses ~call-interactively~.
   - *Tool: ~type_text~*: Accepts ~text~ (string). Pushes string chars to ~unread-command-events~.
   - *Tool: ~press_key~*: Accepts ~key~ (string). Pushes key to ~unread-command-events~.
@@ -52,7 +52,7 @@ Below is a comprehensive technical specification and roadmap you can feed to an 
 *** The Critical Flow:
 To execute "Open file ~foo.txt~", the function must push the inputs for filename and RET *before* calling ~find-file~.
 #+BEGIN_SRC elisp
-(defun emacs-driver--atomic-open (filename)
+(defun flywire--atomic-open (filename)
   (let ((keys (listify-key-sequence (kbd (format "%s RET" filename)))))
     (setq unread-command-events (append unread-command-events keys))
     (call-interactively 'find-file)))
@@ -72,7 +72,7 @@ To execute "Open file ~foo.txt~", the function must push the inputs for filename
 
 - *The Minibuffer Hook*:
   - Implement a hook function attached to ~minibuffer-setup-hook~.
-  - When fired, it should check ~emacs-driver-active-mode~.
+  - When fired, it should check ~flywire-active-mode~.
   - If active, it should *Snapshot* the minibuffer prompt and send it to the Agent callback immediately, essentially asking: *"I am interrupted by a prompt: 'Kill buffer?'. What do I do?"*
 
 - *Post-Command Observation*:
@@ -85,11 +85,11 @@ To execute "Open file ~foo.txt~", the function must push the inputs for filename
 ** Phase 4: The API Surface
 *** Goal: A clean entry point for your Agent package to consume.
 
-*** Task: Create ~emacs-driver.el~ (main entry).
+*** Task: Create ~flywire.el~ (main entry).
 
 *** Interface:
 #+BEGIN_SRC elisp
-(defun emacs-driver-do (instruction-json)
+(defun flywire-do (instruction-json)
   "Accepts a JSON instruction from the LLM and executes it.
    Returns the NEW state snapshot."
   ...)
@@ -112,24 +112,24 @@ The driver should accept a list of atomic steps to perform in one "tick".
 
 Use the following prompt to start the coding agent:
 
-> I need you to build a new Emacs package called ~emacs-driver~.
+> I need you to build a new Emacs package called ~flywire~.
 >
 > *Context*:
 > This package will act as the "arms and eyes" for an LLM Agent running inside Emacs. It needs to programmaticallly drive Emacs interactions in the current user session.
 >
 > *Step 1: State Snapshotting*:
-> Create a function ~emacs-driver-get-snapshot~ that returns a Property List (plist) representing the current state of Emacs.
+> Create a function ~flywire-get-snapshot~ that returns a Property List (plist) representing the current state of Emacs.
 > - It must include: current buffer name, major mode, point position, and a window of text surrounding the cursor (max 50 lines).
 > - It must detect if the Minibuffer is active. If so, capture the Prompt string and the current input content.
 > - It must be robust against errors (e.g., if buffer is empty).
 >
 > *Step 2: Input Simulation*:
-> Create a function ~emacs-driver-push-input (input-string)~ that modifies ~unread-command-events~.
+> Create a function ~flywire-push-input (input-string)~ that modifies ~unread-command-events~.
 > - It should convert the string (e.g., "hello" or specific keys like "RET") into events and append them to ~unread-command-events~.
 > - This allows us to queue inputs *before* calling an interactive command.
 >
 > *Step 3: Tool Execution*:
-> Create a function ~emacs-driver-execute (tool-name args)~.
+> Create a function ~flywire-execute (tool-name args)~.
 > - *~type_text~*: Queues text characters.
 > - *~press_key~*: Queues control keys (uses ~kbd~).
 > - *~run_command~*: Calls ~call-interactively~.
@@ -137,7 +137,7 @@ Use the following prompt to start the coding agent:
 > *Crucial Implementation Detail*:
 > When simulating inputs for a command, we must push the inputs into ~unread-command-events~ *first*, and call the command *last*.
 >
-> Please write the code for ~emacs-driver.el~ covering these requirements. Use ~cl-lib~ where necessary.
+> Please write the code for ~flywire.el~ covering these requirements. Use ~cl-lib~ where necessary.
 
 -----
 

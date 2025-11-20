@@ -1,5 +1,5 @@
 {
-  description = "emacs-driver development environment";
+  description = "flywire development environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

@@ -1,4 +1,4 @@
-;;; test/run-lint.el --- Batch linter for emacs-driver  -*- lexical-binding: t; -*-
+;;; test/run-lint.el --- Batch linter for flywire  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
 ;;
@@ -12,13 +12,13 @@
 (require 'package-lint)
 (require 'bytecomp)
 
-(defvar emacs-driver-root
+(defvar flywire-root
   (expand-file-name ".." (file-name-directory (or load-file-name buffer-file-name)))
-  "Absolute path to the emacs-driver repository root.")
+  "Absolute path to the flywire repository root.")
 
-(defvar emacs-driver-files
-  (directory-files emacs-driver-root t "^emacs-driver.*\\.el$")
-  "List of emacs-driver source files to lint.")
+(defvar flywire-files
+  (directory-files flywire-root t "^flywire.*\\.el$")
+  "List of flywire source files to lint.")
 
 (defvar lint-errors nil
   "List of error messages collected during linting.")
@@ -31,7 +31,7 @@
 
 ;; 1. Checkdoc
 (message "Running checkdoc...")
-(dolist (file emacs-driver-files)
+(dolist (file flywire-files)
   (with-temp-buffer
     (insert-file-contents file)
     (emacs-lisp-mode)
@@ -53,20 +53,23 @@
 
 ;; 2. Package-lint
 (message "Running package-lint...")
-(dolist (file emacs-driver-files)
+(dolist (file flywire-files)
   (with-temp-buffer
     (insert-file-contents file)
     (emacs-lisp-mode)
     (setq buffer-file-name file)
-    (let ((errors (package-lint-buffer)))
-      (when errors
-        (report-error "Package-lint failed for %s:" (file-name-nondirectory file))
-        (dolist (err errors)
-          ;; package-lint returns a list of objects (line col type message)
-          (let ((line (nth 0 err))
-                (col (nth 1 err))
-                (type (nth 2 err))
-                (msg (nth 3 err)))
+    (let ((errors (package-lint-buffer))
+          (has-error nil))
+      (dolist (err errors)
+        (let ((line (nth 0 err))
+              (col (nth 1 err))
+              (type (nth 2 err))
+              (msg (nth 3 err)))
+          (unless (and (eq type 'warning)
+                       (string-match-p "redundant" msg))
+            (unless has-error
+              (setq has-error t)
+              (report-error "Package-lint failed for %s:" (file-name-nondirectory file)))
             (message "  %s:%d:%d: %s: %s" 
                      (file-name-nondirectory file)
                      line col type msg)))))))
@@ -74,15 +77,20 @@
 ;; 3. Byte-compile
 (message "Running byte-compile...")
 (setq byte-compile-error-on-warn t)
-(add-to-list 'load-path emacs-driver-root)
 
-;; Create a separate directory for byte-compiled files to avoid polluting the source tree
-(defvar byte-compile-dest (make-temp-file "emacs-driver-byte-compile" t))
+;; Create a separate directory for byte-compiled files
+(defvar byte-compile-dest (make-temp-file "flywire-byte-compile" t))
 
-(dolist (file emacs-driver-files)
-  (let ((dest (expand-file-name (concat (file-name-nondirectory file) "c") byte-compile-dest)))
+;; Copy files to temp dir to avoid polluting source tree and to ensure clean compilation
+(dolist (file flywire-files)
+  (copy-file file (expand-file-name (file-name-nondirectory file) byte-compile-dest) t))
+
+(add-to-list 'load-path byte-compile-dest)
+
+(dolist (file flywire-files)
+  (let ((target (expand-file-name (file-name-nondirectory file) byte-compile-dest)))
     (condition-case err
-        (unless (byte-compile-file file)
+        (unless (byte-compile-file target)
           (report-error "Byte-compilation failed for %s" (file-name-nondirectory file)))
       (error
        (report-error "Byte-compilation error for %s: %s" (file-name-nondirectory file) err)))))

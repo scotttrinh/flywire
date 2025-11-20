@@ -1,6 +1,6 @@
 # AGENT.md
 
-Working notes for future agents contributing to emacs-driver. This doc explains our planning/devlogs flow, how we develop and test in Doom Emacs, and coding practices that keep the Elisp predictable in a live Emacs environment.
+Working notes for future agents contributing to flywire. This doc explains our planning/devlogs flow, how we develop and test in Doom Emacs, and coding practices that keep the Elisp predictable in a live Emacs environment.
 
 ## Workflow: Plans vs Notes
 
@@ -22,17 +22,17 @@ Working notes for future agents contributing to emacs-driver. This doc explains 
   - All files start with `-*- lexical-binding: t; -*-`.
   - Provide a clear package header and `provide` symbol.
 - Namespaces
-  - Public functions: `emacs-driver-...`; internal helpers: `emacs-driver--...`.
+  - Public functions: `flywire-...`; internal helpers: `flywire--...`.
   - One feature per file; file provides its feature name.
 - Keybindings
   - Default prefix is `C-c C-d`
   - Avoid `C-c <letter>`; that space is reserved for users.
 - Autoloads & load order
-  - Interactive commands that live outside `emacs-driver.el` must be autoloaded from `emacs-driver.el`, e.g.:
+  - Interactive commands that live outside `flywire.el` must be autoloaded from `flywire.el`, e.g.:
     ```elisp
-    (autoload 'emacs-driver-foo "emacs-driver-foo" "Open foo" t)
+    (autoload 'flywire-foo "flywire-foo" "Open foo" t)
     ```
-  - Libraries may `(require 'emacs-driver)` for shared defs (defgroup, faces, errors).
+  - Libraries may `(require 'flywire)` for shared defs (defgroup, faces, errors).
 - Compatibility
   - Target Emacs 28+
 - Docs & comments
@@ -68,7 +68,7 @@ Working notes for future agents contributing to emacs-driver. This doc explains 
    ```
    This checks for:
    - `checkdoc` (docstring style)
-   - `package-lint` (packaging best practices)
+   - `package-lint` (packaging best practices; ignores "redundant" naming warnings)
    - `byte-compile` (syntax and compilation warnings/errors)
 
 ## Devlogs: When To Write Notes
@@ -79,7 +79,7 @@ Working notes for future agents contributing to emacs-driver. This doc explains 
 
 ## Common Pitfalls
 
-- Autoload failures: ensure `emacs-driver.el` autoloads interactive commands from other files.
+- Autoload failures: ensure `flywire.el` autoloads interactive commands from other files.
 - Reserved key sequences: don’t bind `C-c <letter>`.
 - Load-path issues: confirm the working copy is in `load-path` during WIP.
 - Over-eager `require`: avoid heavy `require` at top-level if it creates cycles; autoload where possible.

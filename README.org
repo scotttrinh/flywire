@@ -1,6 +1,6 @@
-* emacs-driver
+* flywire
 
-~emacs-driver~ is an Emacs package that serves as the "arms and eyes" for automated agents (such as LLMs) operating within Emacs. It enables external processes to observe the editor's state and execute interactive commands programmatically in the current user session.
+~flywire~ is an Emacs package that serves as the "arms and eyes" for automated agents (such as LLMs) operating within Emacs. It enables external processes to observe the editor's state and execute interactive commands programmatically in the current user session.
 
 It provides two core capabilities:
 1. **Observation**: Generates JSON-serializable snapshots of the current frame, including buffer content, cursor position, window configuration, and minibuffer state.
@@ -15,7 +15,7 @@ This package is designed to separate the low-level "driving" mechanics from the 
 Add the following to your ~$DOOMDIR/packages.el~:
 
 #+begin_src elisp
-(package! emacs-driver :recipe (:host github :repo "scotttrinh/emacs-driver"))
+(package! flywire :recipe (:host github :repo "scotttrinh/flywire"))
 #+end_src
 
 Then run ~doom sync~.
@@ -23,7 +23,7 @@ Then run ~doom sync~.
 Load it in your ~$DOOMDIR/config.el~:
 
 #+begin_src elisp
-(use-package! emacs-driver
+(use-package! flywire
   :config
   ;; Optional configuration
   )
@@ -35,7 +35,7 @@ Add the following to your configuration:
 
 #+begin_src elisp
 (straight-use-package
- '(emacs-driver :type git :host github :repo "scotttrinh/emacs-driver"))
+ '(flywire :type git :host github :repo "scotttrinh/flywire"))
 #+end_src
 
 ** Manual / package.el
@@ -43,22 +43,22 @@ Add the following to your configuration:
 Clone the repository:
 
 #+begin_src sh
-git clone https://github.com/scotttrinh/emacs-driver.git ~/.emacs.d/site-lisp/emacs-driver
+git clone https://github.com/scotttrinh/flywire.git ~/.emacs.d/site-lisp/flywire
 #+end_src
 
 Add it to your ~load-path~ and require it:
 
 #+begin_src elisp
-(add-to-list 'load-path "~/.emacs.d/site-lisp/emacs-driver")
-(require 'emacs-driver)
+(add-to-list 'load-path "~/.emacs.d/site-lisp/flywire")
+(require 'flywire)
 #+end_src
 
 * Usage
 
-The core entry point is ~emacs-driver-do~, which accepts a JSON string describing a sequence of actions.
+The core entry point is ~flywire-do~, which accepts a JSON string describing a sequence of actions.
 
 #+begin_src elisp
-(emacs-driver-do
+(flywire-do
  "[{\"action\": \"type\", \"text\": \"Hello World\"}, {\"action\": \"key\", \"chord\": \"RET\"}]")
 #+end_src
 

@@ -10,12 +10,12 @@
 
 (require 'seq)
 
-(defconst emacs-driver-test-root
+(defconst flywire-test-root
   (expand-file-name ".." (file-name-directory (or load-file-name buffer-file-name)))
-  "Absolute path to the emacs-driver repository root.")
+  "Absolute path to the flywire repository root.")
 
 ;; Add the project root to load-path
-(add-to-list 'load-path emacs-driver-test-root)
+(add-to-list 'load-path flywire-test-root)
 
 ;; Require dependencies
 (require 'ert-async)
@@ -25,11 +25,11 @@
 
 (require 'ert)
 
-(defconst emacs-driver-test-directory
-  (expand-file-name "test" emacs-driver-test-root))
+(defconst flywire-test-directory
+  (expand-file-name "test" flywire-test-root))
 
 ;; Load all test files
-(dolist (file (directory-files emacs-driver-test-directory t "-test\\.el\\'"))
+(dolist (file (directory-files flywire-test-directory t "-test\\.el\\'"))
   (load file nil nil t))
 
 (ert-run-tests-batch-and-exit)

@@ -1,0 +1,36 @@
+* Plan: Code Quality Refinements for v1.0
+:PROPERTIES:
+:DATE:     2025-11-20
+:END:
+
+** Context
+An expert review of the codebase identified three specific areas where `flywire` can be improved to be more robust, secure, and "good citizen" within the Emacs ecosystem. These changes should be addressed before the initial public release.
+
+** Task 1: Prevent Symbol Table Pollution (Memory Hygiene)
+*** Problem
+In `flywire-action.el`, we currently use `(intern command-name)` to check if a command exists.
+If an external agent hallucinates a command name (e.g., "run_command 'not-real-cmd'"), `intern` creates a new symbol in the global Emacs obarray. Repeated thousands of times, this leaks memory.
+
+*** Solution
+Replace `intern` with `intern-soft`.
+- `(intern-soft "string")` returns the symbol if it exists, or `nil` if it doesn't.
+- If it returns `nil`, we know immediately it's not a valid command, and we don't create garbage symbols.
+
+** Task 2: Structured Error Propagation
+*** Problem
+Currently, when `flywire--execute-step` encounters an unknown action or tool, it simply logs to the *Messages* buffer via `(message ...)`.
+An automated agent driving Emacs might not see this log immediately, leading to "silent failures" where the agent thinks a step succeeded.
+
+*** Solution
+Raise real Lisp errors or return a structured failure response.
+- For `flywire-do`, raising an error `(error "Flywire: unknown action %S" step)` is acceptable because it will interrupt the JSON response and likely be caught by the external process or result in a non-success exit code/response.
+- This ensures the Agent knows *exactly* when and why a step failed.
+
+** Task 3: Atomic Execution Safety
+*** Problem
+`flywire` pushes keys to `unread-command-events`. This is correct, but if the user physically presses a key at the exact same millisecond the Agent is acting, the events could be interleaved, causing undefined behavior.
+
+*** Solution
+Wrap the critical execution blocks in `flywire-action.el` with `(let ((inhibit-quit t)) ...)` where appropriate.
+- This prevents the user from strictly interrupting the Lisp execution flow with `C-g` during the millisecond setup phase, though it doesn't fully lock the keyboard during the subsequent command loop.
+- We should evaluate if binding `inhibit-quit` is sufficient or if we need to be careful about not locking up Emacs if the Agent commands hang.

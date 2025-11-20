@@ -1,0 +1,37 @@
+* Notes: Project Rename to Flywire
+
+** Context
+We decided to move away from the utilitarian name ~emacs-driver~ to something more distinct that fits alongside "Playwright" and "Puppeteer" but captures the essence of an agent operating the editor "by instrument."
+
+** The Winner: Flywire (~flywire.el~)
+- *Metaphor*: "Fly-by-wire."
+- *Why*: perfectly describes the mechanism. The agent doesn't physically touch the keyboard; it sends electronic signals (JSON) which the system interprets to move the control surfaces (buffers/windows).
+- *Vibe*: Mechanical, precise, avionics.
+
+** Other Contenders
+We brainstormed several categories before landing on Avionics.
+
+*** 1. Theatrical (The "Playwright" Siblings)
+- ~stagehand.el~: The invisible force moving props behind the scenes. (Strong contender).
+- ~prompter.el~: Feeds lines to the actors.
+- ~maestro.el~: Conducts the orchestra.
+
+*** 2. Puppetry (The "Puppeteer" Analogs)
+- ~marionette.el~: A puppet controlled from above.
+- ~ventriloquist.el~: Throwing voice/action into the editor.
+
+*** 3. "Arms and Eyes" (The Homunculus)
+- ~homunculus.el~: The "little man" inside the brain with huge hands and eyes. (Scientifically accurate but maybe too academic).
+- ~waldo.el~: Sci-fi term for remote manipulators.
+- ~talos.el~: The mythical bronze automaton.
+- ~exo.el~: Exoskeleton.
+
+*** 4. Avionics (The Final Choice)
+- ~ifr.el~: "Instrument Flight Rules." Flying with zero visibility, relying only on telemetry.
+- ~yoke.el~: The steering column.
+- ~tacan.el~: Tactical Air Navigation.
+
+** Action Taken
+- Renamed all source files (`emacs-driver-*.el` -> `flywire-*.el`).
+- Refactored all symbol prefixes (`emacs-driver-` -> `flywire-`).
+- Updated Nix flakes and test runners.
