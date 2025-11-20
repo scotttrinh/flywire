@@ -1,0 +1,13 @@
+* Test Dependency Management (Nix)
+** Problem
+We want to use Nix for reproducible development environments and testing, but =propcheck= is not available in standard package sets or MELPA.
+
+** Solution
+- Created =flake.nix= to define the development environment.
+- Used =pkgs.runCommand= to create a simple derivation for =propcheck= that fetches from GitHub (via flake inputs) and installs it to =share/emacs/site-lisp=.
+- Added =propcheck=, =dash=, =s=, and =ert-async= to the =emacsWithPackages= environment.
+- Updated =test/run-tests.el= to detect if dependencies are already present in the environment (Nix case) and skip bootstrapping =package.el=.
+
+** Verification
+- Ran =nix run .#test= which successfully ran all tests without downloading external dependencies at runtime.
+- Verified that =propcheck= is available in the load path.

@@ -1,25 +1,37 @@
-;;; test/run-tests.el --- Runner for emacs-driver ERT tests -*- lexical-binding: t; -*-
+;;; test/run-tests.el --- Batch test runner with dependencies  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Simple batch runner that bootstraps the repo and executes every test
-;; defined under test/.
+;;
+;; Loads every *-test.el file and executes the ERT suite.
+;; Dependencies (ert-async, dash, s, propcheck) are assumed to be in the load-path
+;; (e.g. provided by the Nix environment).
 
 ;;; Code:
 
-(let* ((script-dir (file-name-directory (or load-file-name buffer-file-name)))
-       (root (file-name-directory (directory-file-name script-dir)))
-       (vendor (expand-file-name "test/vendor" root)))
-  (add-to-list 'load-path root)             ; so `require` finds emacs-driver
-  (add-to-list 'load-path (expand-file-name "test" root))
+(require 'seq)
 
-  ;; Add vendor paths
-  (add-to-list 'load-path (expand-file-name "dash" vendor))
-  (add-to-list 'load-path (expand-file-name "s" vendor))
-  (add-to-list 'load-path (expand-file-name "propcheck" vendor))
+(defconst emacs-driver-test-root
+  (expand-file-name ".." (file-name-directory (or load-file-name buffer-file-name)))
+  "Absolute path to the emacs-driver repository root.")
 
-  (require 'ert)
+;; Add the project root to load-path
+(add-to-list 'load-path emacs-driver-test-root)
 
-  (dolist (file (directory-files (expand-file-name "test" root) t "-test\\.el$"))
-    (load file nil t))
+;; Require dependencies
+(require 'ert-async)
+(require 'dash)
+(require 's)
+(require 'propcheck)
 
-  (ert-run-tests-batch-and-exit))
+(require 'ert)
+
+(defconst emacs-driver-test-directory
+  (expand-file-name "test" emacs-driver-test-root))
+
+;; Load all test files
+(dolist (file (directory-files emacs-driver-test-directory t "-test\\.el\\'"))
+  (load file nil nil t))
+
+(ert-run-tests-batch-and-exit)
+
+;;; run-tests.el ends here

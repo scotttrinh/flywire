@@ -1,0 +1,16 @@
+* Test Dependency Management
+** Problem
+The test runner was using manually vendored paths for dependencies (=dash=, =s=), which is not scalable or standard. We wanted to switch to =package.el= for managing development dependencies.
+
+** Solution
+- Updated =test/run-tests.el= to:
+  - Initialize =package.el= with a local =.elpa/= directory.
+  - Configure MELPA and GNU ELPA archives.
+  - Install =ert-async=, =dash=, and =s= automatically.
+  - Keep =propcheck= as a vendored dependency since it's not available on MELPA.
+- Created =.gitignore= to exclude =.elpa/= and build artifacts.
+
+** Verification
+- Ran =emacs -Q --batch -l test/run-tests.el=
+- Dependencies were installed to =.elpa/=.
+- All 19 tests passed.

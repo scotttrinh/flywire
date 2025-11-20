@@ -1,0 +1,12 @@
+* Test Dependency Management (Nix Refactoring)
+** Problem
+The initial Nix setup used an overlay to add =propcheck= to =emacsPackages=. This added complexity.
+
+** Solution
+- Refactored =flake.nix= to define =propcheck= as a standalone derivation using =runCommand=.
+- Passed this derivation directly to =emacsWithPackages=, removing the need for an overlay.
+- This simplifies the configuration while keeping the same behavior.
+
+** Verification
+- Ran =nix run .#test= and verified that tests still pass.
+- Confirmed that =propcheck= is correctly included in the load path.

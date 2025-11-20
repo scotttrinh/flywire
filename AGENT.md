@@ -45,14 +45,19 @@ Working notes for future agents contributing to emacs-driver. This doc explains 
 - Keep UI non-blocking
 
 ### Running the automated test suite
-
-- Default runner:  
-  ```sh
-  emacs -Q --batch -l test/run-tests.el
-  ```  
-  This bootstraps the repo-local `.elpa/` (for `ert-async`), loads every `*-test.el`, and exits non-zero on a failure.
-- The runner prints every asynchronous test’s progress. When debugging, re-run with `EDEBUG=1` or add `(message ...)` calls, but remove noisy logging before you ship.
-- If you add new tests, make sure they can run in batch (no interactive prompts, no buffers left behind).
+ 
+ - Default runner:  
+   ```sh
+   nix run .#test
+   ```
+   Or, if you want to run manually in a dev shell:
+   ```sh
+   nix develop
+   emacs -q --batch -l test/run-tests.el
+   ```  
+   Dependencies (including `ert-async` and `propcheck`) are provided by the Nix environment.
+ - The runner prints every asynchronous test’s progress. When debugging, re-run with `EDEBUG=1` or add `(message ...)` calls, but remove noisy logging before you ship.
+ - If you add new tests, make sure they can run in batch (no interactive prompts, no buffers left behind).
 
 ## Devlogs: When To Write Notes
 

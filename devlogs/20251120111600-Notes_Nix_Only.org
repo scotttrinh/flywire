@@ -1,0 +1,14 @@
+* Test Dependency Management (Nix-only)
+** Problem
+We decided to fully adopt Nix for the development environment and testing, replacing the hybrid =package.el= bootstrapping approach. The =package.el= approach was flaky and required manual network access during test runs, whereas Nix provides a reproducible, offline-capable environment.
+
+** Solution
+- Updated =test/run-tests.el= to simply =require= the dependencies (=ert-async=, =dash=, =s=, =propcheck=), assuming they are provided by the environment.
+- Updated =flake.nix= to:
+  - Define a derivation for =propcheck= (fetching from GitHub) using =runCommand= to create a proper ELPA-style directory structure with a generated =propcheck-pkg.el=.
+  - Add =propcheck= to the =emacsWithPackages= environment explicitly via =pkgs.emacsPackages.propcheck=.
+- Updated =AGENT.md= to document `nix run .#test` as the standard way to run tests.
+
+** Verification
+- Ran =nix run .#test= and verified all 19 tests passed.
+- Confirmed =propcheck= is correctly loaded from the Nix store.
