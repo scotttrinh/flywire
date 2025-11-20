@@ -1,0 +1,17 @@
+* Phase 4 Notes
+** What Happened
+- Successfully vendored `propcheck` (and dependencies `dash`, `s`) into `test/vendor/`.
+- Updated `test/run-tests.el` to dynamically load tests and include vendor paths.
+- Created `test/emacs-driver-property-test.el` with three property-based tests:
+  1. `emacs-driver-prop-push-input`: Verifies any ASCII string input maps to character events.
+  2. `emacs-driver-prop-simulate-keys-simple`: Verifies alphanumeric strings are parsed correctly by `kbd` logic.
+  3. `emacs-driver-prop-snapshot-content-substring`: Fuzz-tests the snapshot content windowing against random buffer content, random point positions, and random radii.
+- Debugged and fixed a tricky issue where `propcheck-generate-integer` throws an error if `min == max` (which happened when `lines` shrunk to nil, making buffer empty, making `point-max` 1).
+
+** Verification
+- All 14 tests passed (6 sync, 4 async, 3 property, 1 edge case).
+- Property tests ran successfully with randomized inputs.
+
+** Next Steps
+- The `emacs-driver` package is now feature-complete and robustly tested.
+- Ready for integration with the Agent.

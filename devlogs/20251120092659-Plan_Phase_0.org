@@ -1,0 +1,11 @@
+* Phase 0 Plan
+** Objective
+- Sketch the emacs-driver package skeleton so we can start wiring the snapshot/action/test components described in ROADMAP.org.
+** Tasks
+1. Outline the module structure: core entry point, snapshot helper, action executor, and supporting utilities.
+2. Prepare the initial test harness (test/run-tests.el) that loads the package and runs a simple ERT case to verify we can load the driver.
+3. Add a small ERT test that exercises the snapshot retrieval or a stubbed action to prove the harness works.
+** Acceptance criteria
+- Repository contains clearly named Elisp modules ready for Phase 1/2 work.
+- Tests directory can be invoked via the documented runner and includes at least one passing case.
+- Devlog documents the plan so we have traceability before coding starts.

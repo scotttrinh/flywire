@@ -1,0 +1,20 @@
+* Phase 3 Notes
+** What Happened
+- Implemented `emacs-driver-async.el` which provides:
+  - `emacs-driver-async-mode`: Minor mode to toggle monitoring.
+  - `minibuffer-setup-hook` monitor: Pushes snapshots when minibuffer opens.
+  - Idle monitor: Pushes snapshots when Emacs is idle for 0.5s.
+  - `emacs-driver-output-handler`: Configurable callback (default: print JSON).
+- Updated `emacs-driver.el` to export `emacs-driver-do-async`, allowing non-blocking execution.
+- Added `test/emacs-driver-async-test.el` verifying async execution, timers, and hooks.
+- Refactored `test/run-tests.el` to load all test files dynamically.
+
+** Verification
+- All 10 tests passed (6 sync, 4 async).
+- Confirmed `emacs-driver-do-async` returns `'started` and executes actions on timer tick.
+- Confirmed minibuffer and idle hooks invoke the output handler.
+
+** Next Steps
+- The Roadmap's Phase 4 (API Surface) is largely implemented.
+- We should do a final pass to ensure packaging correctness (e.g., `provide` statements, dependencies).
+- Document usage examples.

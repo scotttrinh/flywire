@@ -1,0 +1,11 @@
+* Phase 0 Notes
+** What Happened
+- Logged the Phase 0 plan to capture objectives for structuring core files and tests.
+- Added `emacs-driver.el`, `-snapshot`, and `-action` modules wired to parse JSON instructions, collect safe snapshots, and queue inputs/commands so the driver can begin supporting Phase 1/2 requirements.
+- Created the test harness (`test/run-tests.el`) plus a basic ERT suite that verifies `emacs-driver-get-snapshot` returns a plist, and validated it with the documented runner.
+** Verification
+- `emacs -Q --batch -l test/run-tests.el`
+** Next Steps
+- Deepen the snapshot logic per the roadmap (window list metadata, minibuffer context, smaller text windows).
+- Expand command/action helpers (more tools, atomic action sequencing) toward the Atomic Executor phase.
+- Continue documenting each phase by saving future Plan/Notes entries as progress unfolds.

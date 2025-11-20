@@ -1,0 +1,15 @@
+#+TITLE: Notes: E2E Integration Tests
+#+DATE: 2025-11-20
+
+* Context
+The user asked for tests that exercise the driver end-to-end with a real Emacs session, simulating how an external agent would interact with it.
+
+* Changes
+- Created `test/emacs-driver-e2e-test.el` which uses `call-process` to spawn a fresh Emacs subprocess.
+- The test runs `emacs -Q --batch -L . -l emacs-driver.el --eval ...` to strictly verify the CLI contract.
+- It sends a JSON instruction payload and parses the stdout JSON response, verifying the snapshot structure.
+
+* Verification
+- Ran `emacs -Q --batch -l test/run-tests.el`.
+- Confirmed `emacs-driver-e2e-json-roundtrip` passed alongside existing unit and property tests.
+- This provides high confidence that the package works when loaded in a clean environment and driven via the command line.

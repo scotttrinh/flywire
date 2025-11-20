@@ -1,0 +1,24 @@
+* Phase 4 Plan: Property-Based Testing
+** Objective
+- Increase test confidence by adding property-based tests using `propcheck`.
+- Verify that input simulation and action queuing work correctly for a wide range of inputs, not just hardcoded strings.
+
+** Tasks
+1. **Dependency Management**:
+   - Create `test/vendor/`.
+   - Clone `dash.el`, `s.el`, and `propcheck` into `test/vendor/` (manual vendoring since we aren't using Cask/Eldev yet).
+   - Update `test/run-tests.el` to add these paths to `load-path`.
+2. **Property Tests**:
+   - Create `test/emacs-driver-property-test.el`.
+   - **Test 1**: `emacs-driver-push-input`.
+     - Property: For any string `S`, `unread-command-events` should contain the character list of `S`.
+   - **Test 2**: `emacs-driver-simulate-keys` (Partial).
+     - Property: For simple alphanumeric strings, `simulate-keys` behaves like `push-input`.
+     - *Note*: We might skip complex chords for now as generating valid `kbd` strings randomly is non-trivial without a complex generator.
+   - **Test 3**: `emacs-driver--windowed-content`.
+     - Property: For any buffer content and any cursor position, the returned windowed content should be a substring of the buffer.
+
+** Acceptance Criteria
+- `test/run-tests.el` successfully loads `propcheck`.
+- New property tests pass.
+- Existing tests still pass.

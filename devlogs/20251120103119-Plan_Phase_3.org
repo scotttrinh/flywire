@@ -1,0 +1,34 @@
+* Phase 3 Plan: The Reactive Bridge
+** Objective
+- Enable asynchronous command execution where the driver yields control to Emacs and waits for a settling point (idle or minibuffer setup) before capturing the next snapshot.
+
+** Architecture
+- **Async Module**: `emacs-driver-async.el`
+- **Callback Mechanism**: The driver needs to notify the external agent when a new state is available (e.g., after a command finishes or minibuffer opens).
+- **Output Channel**: We will use a customizable callback `emacs-driver-output-handler` that defaults to printing a specific JSON message string to stdout/stderr, which the external agent can parse.
+
+** Tasks
+1. **Scaffold `emacs-driver-async.el`**:
+   - Define `emacs-driver-async-mode` to toggle hooks.
+   - Define `emacs-driver-output-handler`.
+
+2. **Implement Monitors**:
+   - **Minibuffer Monitor**: Hook into `minibuffer-setup-hook`. When fired, capture snapshot (with minibuffer info) and invoke output handler.
+   - **Idle Monitor**: Use `run-with-idle-timer`. When Emacs is idle for X seconds (e.g., 0.5), capture snapshot and invoke output handler.
+
+3. **Async Action Executor**:
+   - Create `emacs-driver-execute-async (instruction-json)`.
+   - It should:
+     1. Parse instructions.
+     2. Queue inputs (Atomic phase).
+     3. Schedule the command execution via `run-with-timer` (0 sec) to allow the current stack to unwind (yielding to event loop).
+     4. Return immediately (indicating "Execution Started").
+
+** Implementation Details
+- We need to distinguish between "Agent initiated action" and "Random user interaction" if possible, or just report everything. The Roadmap implies we are "The Driver", so we turn on the mode when we want to observe.
+
+** Acceptance Criteria
+- Can run a test that:
+  1. Enables async mode.
+  2. Triggers a command that opens a minibuffer (e.g., `execute-extended-command`).
+  3. Verifies that the output handler was called with a snapshot containing the minibuffer prompt.

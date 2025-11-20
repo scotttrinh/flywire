@@ -1,0 +1,14 @@
+* Phase 1 Notes
+** What Happened
+- Expanded `test/emacs-driver-test.el` with 5 new tests covering snapshot content windowing, truncation, action queuing (keys and text), and JSON instruction processing.
+- Fixed a critical bug in `emacs-driver.el`: `json-parse-string` returns vectors for arrays by default, which broke `dolist`. Added `:array-type 'list`.
+- Fixed a syntax error in `emacs-driver-action.el`: Unescaped double quotes in a docstring caused the Elisp reader to misparse the function, leading to `void-variable C-x` errors.
+- Verified all tests pass with `emacs -Q --batch -l test/run-tests.el`.
+
+** Verification
+- Ran the full suite of 6 tests. All passed.
+- Debug logs confirmed `emacs-driver-simulate-keys` receives correct input and `kbd` works as expected.
+
+** Next Steps
+- Proceed to Phase 3: The Reactive Bridge.
+- Implement the Async Step Manager (`emacs-driver-async.el`?) to handle `run-with-timer`, minibuffer hooks, and idle timers.

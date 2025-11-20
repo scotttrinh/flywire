@@ -1,0 +1,19 @@
+#+TITLE: Notes: Property Tests
+#+DATE: 2025-11-20
+
+* Context
+We wanted to improve robustness of the emacs-driver API surface by adding property-based tests, specifically covering:
+- Windowed content radius constraints
+- Minibuffer state construction
+- JSON instruction parsing
+- Key simulation robustness
+
+* Changes
+- Added `emacs-driver-prop-windowed-content-radius`: Verifies line count of windowed content is within bounds.
+- Added `emacs-driver-prop-minibuffer-state`: Mocks minibuffer primitives to ensure correct plist construction.
+- Added `emacs-driver-prop-do-json-instructions`: Verifies JSON parsing and action delegation.
+- Added `emacs-driver-prop-simulate-keys-robustness`: Ensures invalid keys don't crash the driver.
+- Fixed an initial off-by-one/parsing error in the radius test by using `count-lines` instead of `split-string` and correcting parenthesis balance.
+
+* Verification
+Ran `emacs -Q --batch -l test/run-tests.el` and all 18 tests passed (including the new property tests).

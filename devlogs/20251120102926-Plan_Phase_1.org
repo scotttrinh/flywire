@@ -1,0 +1,17 @@
+* Phase 1 Plan: Verify & Solidify Observer and Atomic Executor
+** Objective
+- Ensure the code skeleton from Phase 0 is robust, correct, and ready for the complex async work in Phase 3.
+- We need to prove that snapshots capture the right data and that actions properly queue events.
+
+** Tasks
+1. **Test Expansion**:
+   - Add tests for `emacs-driver--windowed-content` to verify it respects the radius and handles boundaries (start/end of buffer).
+   - Add tests for `emacs-driver-simulate-keys` and `emacs-driver-push-input` to verify `unread-command-events` modification.
+   - Add a test for `emacs-driver-do` parsing JSON and executing steps.
+2. **Refinement**:
+   - Review `emacs-driver-snapshot.el` and `emacs-driver-action.el` for any missing edge case handling based on test results.
+
+** Acceptance Criteria
+- `test/emacs-driver-test.el` has multiple tests covering snapshot details and action queuing.
+- `emacs -Q --batch -l test/run-tests.el` passes with the new tests.
+- We are confident that "Atomic Execution" (Queue first, Call last) logic is sound.

@@ -1,0 +1,159 @@
+* You are absolutely correct. Separating the * "Driver"* (the machinery that touches Emacs internals) from the * "Agent"* (the logic that talks to the LLM) is best practice here. It allows you to iterate on the mechanics of "computer use" without breaking your prompt logic, and vice versa.
+
+Let's call the driver package *~emacs-driver~*.
+
+Below is a comprehensive technical specification and roadmap you can feed to an AI coding agent to implement *~emacs-driver~*.
+
+-----
+
+* Project Roadmap: *~emacs-driver~*
+** Objective: Build a library that enables an asynchronous process to observe the Emacs state and execute interactive commands programmatically within the *current* user session.
+
+** Architectural Philosophy:
+- *Observation*: Return a JSON-serializable snapshot of the current frame/buffer state.
+- *Action*: Support two modes of interaction:
+  - *Atomic/Blind*: "Run ~find-file~, type ~main.py~, hit ~RET~." (Used when the plan is clear).
+  - *Reactive/Stepped*: "Run ~magit-status~. Stop. Let me look at the buffer. Now type ~s~." (Used for exploration).
+
+-----
+
+** Phase 1: The Observer (State Serialization)
+*** Goal: Implement a function that returns the "Context Window" for the LLM.
+
+*** Task: Create ~emacs-driver-snapshot.el~.
+
+*** Requirements:
+- Implement ~emacs-driver-get-snapshot~.
+- It must return a helper plist/struct containing:
+  - *Buffer Info*: Name, major-mode, buffer-file-name (if any).
+  - *Content (Windowed)*: Get text around the cursor (e.g., +/- 50 lines). *Do not dump the whole buffer if it is large.*
+  - *Cursor*: Point position, column number, line number.
+  - *Minibuffer State*: Boolean ~active-minibuffer-window~, and if active, the ~minibuffer-prompt~ and current ~minibuffer-contents~.
+  - *Window Configuration*: A list of other visible buffers in the current frame.
+
+*** Constraint: This function must be fast and fail-safe. It cannot error out if a buffer is weird (e.g., image mode).
+
+-----
+
+** Phase 2: The Atomic Executor (Blind Execution)
+*** Goal: Implement the "Pre-load" strategy for tool calls where the arguments are known in advance.
+
+*** Task: Create ~emacs-driver-action.el~.
+
+*** Requirements:
+- Implement ~emacs-driver-simulate-keys KEY-SEQUENCE~.
+  - This should parse a string like "C-x C-f" or "my-file.txt RET" into events.
+  - *Mechanism*: Use ~(listify-key-sequence (kbd ...))~ and append to ~unread-command-events~.
+- Implement ~emacs-driver-execute-tool TOOL-NAME ARGS~.
+  - *Tool: ~run_command~*: Accepts ~command_name~ (string). Uses ~call-interactively~.
+  - *Tool: ~type_text~*: Accepts ~text~ (string). Pushes string chars to ~unread-command-events~.
+  - *Tool: ~press_key~*: Accepts ~key~ (string). Pushes key to ~unread-command-events~.
+
+*** The Critical Flow:
+To execute "Open file ~foo.txt~", the function must push the inputs for filename and RET *before* calling ~find-file~.
+#+BEGIN_SRC elisp
+(defun emacs-driver--atomic-open (filename)
+  (let ((keys (listify-key-sequence (kbd (format "%s RET" filename)))))
+    (setq unread-command-events (append unread-command-events keys))
+    (call-interactively 'find-file)))
+#+END_SRC
+
+-----
+
+** Phase 3: The Reactive Bridge (Handling Unknowns)
+*** Goal: Allow the agent to trigger a command, wait for the UI to settle, and *then* decide what to do. This is required for Minibuffers or complex UI (Magit).
+
+*** Task: Implement the Async Step Manager.
+
+*** Requirements:
+- *The Execution Queue*:
+  We need a way to run a command, then yield control back to the Emacs Event Loop so the UI updates, then trigger a callback.
+  - Use ~(run-with-timer 0.1 nil ...))~ to schedule the next "tick" of the agent.
+
+- *The Minibuffer Hook*:
+  - Implement a hook function attached to ~minibuffer-setup-hook~.
+  - When fired, it should check ~emacs-driver-active-mode~.
+  - If active, it should *Snapshot* the minibuffer prompt and send it to the Agent callback immediately, essentially asking: *"I am interrupted by a prompt: 'Kill buffer?'. What do I do?"*
+
+- *Post-Command Observation*:
+  - If the Agent says "Run ~magit-status~", we execute it.
+  - We need an ~idle-timer~ that detects when Emacs stops working.
+  - When idle, we trigger a new Snapshot to the Agent: *"Command finished. Here is the new view."*
+
+-----
+
+** Phase 4: The API Surface
+*** Goal: A clean entry point for your Agent package to consume.
+
+*** Task: Create ~emacs-driver.el~ (main entry).
+
+*** Interface:
+#+BEGIN_SRC elisp
+(defun emacs-driver-do (instruction-json)
+  "Accepts a JSON instruction from the LLM and executes it.
+   Returns the NEW state snapshot."
+  ...)
+#+END_SRC
+
+*** Instructions Schema:
+The driver should accept a list of atomic steps to perform in one "tick".
+#+BEGIN_SRC json
+[
+  {"action": "type", "text": "foo.txt"},
+  {"action": "key", "chord": "RET"},
+  {"action": "command", "name": "find-file"} 
+  // Note: Command is last because it consumes the inputs!
+]
+#+END_SRC
+
+-----
+
+** Implementation Plan (Copy-Paste for Agent)
+
+Use the following prompt to start the coding agent:
+
+> I need you to build a new Emacs package called ~emacs-driver~.
+>
+> *Context*:
+> This package will act as the "arms and eyes" for an LLM Agent running inside Emacs. It needs to programmaticallly drive Emacs interactions in the current user session.
+>
+> *Step 1: State Snapshotting*:
+> Create a function ~emacs-driver-get-snapshot~ that returns a Property List (plist) representing the current state of Emacs.
+> - It must include: current buffer name, major mode, point position, and a window of text surrounding the cursor (max 50 lines).
+> - It must detect if the Minibuffer is active. If so, capture the Prompt string and the current input content.
+> - It must be robust against errors (e.g., if buffer is empty).
+>
+> *Step 2: Input Simulation*:
+> Create a function ~emacs-driver-push-input (input-string)~ that modifies ~unread-command-events~.
+> - It should convert the string (e.g., "hello" or specific keys like "RET") into events and append them to ~unread-command-events~.
+> - This allows us to queue inputs *before* calling an interactive command.
+>
+> *Step 3: Tool Execution*:
+> Create a function ~emacs-driver-execute (tool-name args)~.
+> - *~type_text~*: Queues text characters.
+> - *~press_key~*: Queues control keys (uses ~kbd~).
+> - *~run_command~*: Calls ~call-interactively~.
+>
+> *Crucial Implementation Detail*:
+> When simulating inputs for a command, we must push the inputs into ~unread-command-events~ *first*, and call the command *last*.
+>
+> Please write the code for ~emacs-driver.el~ covering these requirements. Use ~cl-lib~ where necessary.
+
+-----
+
+** One Specific Technical warning for you (The Developer)
+
+When you implement **Phase 2 (Atomic Executor)**, order matters significantly.
+
+If the Agent wants to ~find-file~ -> ~test.txt~ -> ~RET~:
+
+*Wrong Way*:
+- Call ~(find-file)~ -> *Emacs BLOCKS waiting for input. Code stops.*
+
+*Right Way*:
+- Push ~t~, ~e~, ~s~, ~t~, ~.~, ~t~, ~x~, ~t~ to ~unread-command-events~.
+- Push ~return~ to ~unread-command-events~.
+- Call ~(find-file)~.
+- Emacs starts ~find-file~, sees the events in the queue, consumes them, opens the file, and *then* your Lisp function returns.
+
+The prompt I provided above explicitly instructs the agent to handle this "Queue First, Call Last" logic.
