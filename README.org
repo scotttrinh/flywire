@@ -1,0 +1,90 @@
+* emacs-driver
+
+~emacs-driver~ is an Emacs package that serves as the "arms and eyes" for automated agents (such as LLMs) operating within Emacs. It enables external processes to observe the editor's state and execute interactive commands programmatically in the current user session.
+
+It provides two core capabilities:
+1. **Observation**: Generates JSON-serializable snapshots of the current frame, including buffer content, cursor position, window configuration, and minibuffer state.
+2. **Execution**: precise simulation of user input (keystrokes, text entry) and interactive command execution.
+
+This package is designed to separate the low-level "driving" mechanics from the high-level "agent" logic, ensuring robust and predictable control.
+
+* Installation
+
+** Doom Emacs
+
+Add the following to your ~$DOOMDIR/packages.el~:
+
+#+begin_src elisp
+(package! emacs-driver :recipe (:host github :repo "scotttrinh/emacs-driver"))
+#+end_src
+
+Then run ~doom sync~.
+
+Load it in your ~$DOOMDIR/config.el~:
+
+#+begin_src elisp
+(use-package! emacs-driver
+  :config
+  ;; Optional configuration
+  )
+#+end_src
+
+** Straight.el
+
+Add the following to your configuration:
+
+#+begin_src elisp
+(straight-use-package
+ '(emacs-driver :type git :host github :repo "scotttrinh/emacs-driver"))
+#+end_src
+
+** Manual / package.el
+
+Clone the repository:
+
+#+begin_src sh
+git clone https://github.com/scotttrinh/emacs-driver.git ~/.emacs.d/site-lisp/emacs-driver
+#+end_src
+
+Add it to your ~load-path~ and require it:
+
+#+begin_src elisp
+(add-to-list 'load-path "~/.emacs.d/site-lisp/emacs-driver")
+(require 'emacs-driver)
+#+end_src
+
+* Usage
+
+The core entry point is ~emacs-driver-do~, which accepts a JSON string describing a sequence of actions.
+
+#+begin_src elisp
+(emacs-driver-do
+ "[{\"action\": \"type\", \"text\": \"Hello World\"}, {\"action\": \"key\", \"chord\": \"RET\"}]")
+#+end_src
+
+* Development
+
+** Testing
+
+This project uses [[https://nixos.org/][Nix]] to manage development dependencies and test environments.
+
+To run the full test suite:
+
+#+begin_src sh
+nix run .#test
+#+end_src
+
+To run tests manually in a development shell:
+
+#+begin_src sh
+nix develop
+emacs -q --batch -l test/run-tests.el
+#+end_src
+
+** Workflow
+
+Development follows a "Plan vs Notes" workflow recorded in the ~devlogs/~ directory.
+- **Plans**: Detailed specifications of intended changes (e.g., ~YYYYMMDDHHMM-Plan_Phase_N.org~).
+- **Notes**: Retrospective logs of what was actually implemented, issues encountered, and decisions made (e.g., ~YYYYMMDDHHMM-Notes_*.org~).
+
+Please refer to [[file:AGENT.md][AGENT.md]] for detailed contribution guidelines and coding conventions.
