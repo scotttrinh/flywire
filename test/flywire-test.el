@@ -60,10 +60,11 @@
   (should (equal unread-command-events '(?h ?e ?l ?l ?o))))
 
 (ert-deftest flywire-do-integration ()
-  "Driver should parse JSON and execute actions."
+  "Driver should execute parsed actions."
   (setq unread-command-events nil)
-  (let ((json "[{\"action\": \"type\", \"text\": \"foo\"}, {\"action\": \"key\", \"chord\": \"RET\"}]"))
-    (flywire-do json)
+  (let* ((json "[{\"action\": \"type\", \"text\": \"foo\"}, {\"action\": \"key\", \"chord\": \"RET\"}]")
+         (parsed (json-parse-string json :object-type 'alist :array-type 'list)))
+    (flywire-do parsed)
     (let ((expected (append '(?f ?o ?o) (listify-key-sequence (kbd "RET")))))
       (should (equal unread-command-events expected)))))
 

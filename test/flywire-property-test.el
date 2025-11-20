@@ -92,14 +92,15 @@
              (propcheck-should (string-equal (plist-get state :contents) content))))))))
 
 (propcheck-deftest flywire-prop-do-json-instructions ()
-  "flywire-do should parse JSON and execute actions."
+  "flywire-do should execute actions from parsed JSON."
   (let ((txt (propcheck-generate-string "text")))
     (setq unread-command-events nil)
     (let* ((instruction `((action . "type") (text . ,txt)))
-           (json-str (json-encode (vector instruction))))
+           (json-str (json-encode (vector instruction)))
+           (parsed (json-parse-string json-str :object-type 'alist :array-type 'list)))
        ;; Mock snapshot to avoid side effects or complex return values
        (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
-         (let ((result (flywire-do json-str)))
+         (let ((result (flywire-do parsed)))
            (propcheck-should (equal result '(:mock-snapshot t)))
            (propcheck-should (equal unread-command-events (string-to-list txt))))))))
 
@@ -166,25 +167,26 @@
         (should-error (flywire-do instructions))))))
 
 (propcheck-deftest flywire-prop-do-json-invalid-action ()
-  "flywire-do should signal error on invalid action type in JSON."
+  "flywire-do should signal error on invalid action type in parsed JSON."
   (let ((invalid-action (propcheck-generate-string "invalid-action")))
     ;; Ensure string isn't one of the valid actions
     (while (member invalid-action '("type" "key" "command"))
       (setq invalid-action (propcheck-generate-string "invalid-action")))
     
     (let* ((instruction `((action . ,invalid-action)))
-           (json-str (json-encode (vector instruction))))
+           (json-str (json-encode (vector instruction)))
+           (parsed (json-parse-string json-str :object-type 'alist :array-type 'list)))
       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
-        (should-error (flywire-do json-str))))))
+        (should-error (flywire-do parsed))))))
 
 (propcheck-deftest flywire-prop-do-json-invalid-syntax ()
-  "flywire-do should signal error on malformed JSON."
+  "Parsing malformed JSON should signal error before reaching flywire."
   (let ((garbage (propcheck-generate-string "garbage")))
     ;; Ensure it's not coincidentally valid JSON
     (while (ignore-errors (json-parse-string garbage) t)
       (setq garbage (concat "{" (propcheck-generate-string "garbage"))))
     
-    (should-error (flywire-do garbage) :type 'json-error)))
+    (should-error (json-parse-string garbage :object-type 'alist :array-type 'list) :type 'json-error)))
 
 (provide 'test/flywire-property-test)
 ;;; test/flywire-property-test.el ends here

@@ -31,7 +31,8 @@ Returns the stdout as a string."
   "Launch a subprocess, send a JSON instruction, and parse the result."
   (let* ((json-arg "[{\"action\": \"type\", \"text\": \"e2e\"}]")
          ;; We use princ to output the raw JSON string to stdout
-         (eval-form (format "(princ (json-encode (flywire-do %S)))" json-arg))
+         ;; Note: flywire-do no longer parses JSON internally, so we parse it here
+         (eval-form (format "(princ (json-encode (flywire-do (json-parse-string %S :object-type 'alist :array-type 'list))))" json-arg))
          (output (flywire-e2e-run eval-form))
          (json-res (json-parse-string output :object-type 'plist)))
     

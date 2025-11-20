@@ -55,17 +55,18 @@ Add it to your ~load-path~ and require it:
 
 * Usage
 
-The core entry point is ~flywire-do~, which accepts either a JSON string or a native Elisp list describing a sequence of actions.
+The core entry point is ~flywire-do~, which accepts a native Elisp list describing a sequence of actions.
 
 #+begin_src elisp
-;; Using JSON string
-(flywire-do
- "[{\"action\": \"type\", \"text\": \"Hello World\"}, {\"action\": \"key\", \"chord\": \"RET\"}]")
-
-;; Using Elisp structure (faster, no parsing overhead)
+;; Using Elisp structure
 (flywire-do
  '(((action . "type") (text . "Hello World"))
    ((action . "key") (chord . "RET"))))
+
+;; If you have a JSON string (e.g. from an external process), parse it first:
+(let ((json-string "[{\"action\": \"type\", \"text\": \"Hello\"}]"))
+  (flywire-do
+   (json-parse-string json-string :object-type 'alist :array-type 'list)))
 #+end_src
 
 * Configuration

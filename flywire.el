@@ -61,29 +61,23 @@ STEP should be an alist with at least an `action` entry."
 ;;;###autoload
 (defun flywire-do (instructions)
   "Execute INSTRUCTIONS and return a fresh snapshot plist.
-INSTRUCTIONS can be a JSON string or a list of action alists.
+INSTRUCTIONS must be a list of action alists (e.g., parsed from JSON).
 The function ensures inputs are queued before commands run, then returns
 `flywire-snapshot-get-snapshot` for the updated state."
-  (let ((steps (if (stringp instructions)
-                   (json-parse-string instructions :object-type 'alist :array-type 'list)
-                 instructions)))
-    (dolist (step steps)
-      (flywire--execute-step step))
-    (flywire-snapshot-get-snapshot)))
+  (dolist (step instructions)
+    (flywire--execute-step step))
+  (flywire-snapshot-get-snapshot))
 
 ;;;###autoload
 (defun flywire-do-async (instructions)
   "Execute INSTRUCTIONS asynchronously.
-INSTRUCTIONS can be a JSON string or a list of action alists.
+INSTRUCTIONS must be a list of action alists.
 Returns \\='started symbol immediately.  The actions are scheduled on a timer.
 State updates will be pushed via `flywire-async-output-handler`."
-  (let ((steps (if (stringp instructions)
-                   (json-parse-string instructions :object-type 'alist :array-type 'list)
-                 instructions)))
-    (run-with-timer 0 nil
-                    (lambda ()
-                      (dolist (step steps)
-                        (flywire--execute-step step)))))
+  (run-with-timer 0 nil
+                  (lambda ()
+                    (dolist (step instructions)
+                      (flywire--execute-step step))))
   'started)
 
 (provide 'flywire)

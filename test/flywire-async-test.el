@@ -5,12 +5,14 @@
 
 (ert-deftest flywire-async-do-returns-started ()
   "Async execution should return 'started and schedule timer."
-  (should (eq (flywire-do-async "[]") 'started)))
+  (should (eq (flywire-do-async '()) 'started)))
 
 (ert-deftest flywire-async-execution ()
   "Async execution should eventually run steps."
   (setq unread-command-events nil)
-  (flywire-do-async "[{\"action\": \"type\", \"text\": \"async\"}]")
+  (let* ((json-str "[{\"action\": \"type\", \"text\": \"async\"}]")
+         (parsed (json-parse-string json-str :object-type 'alist :array-type 'list)))
+    (flywire-do-async parsed))
   ;; Wait for timer to run. In batch mode, sit-for should run timers.
   (sit-for 0.2)
   (should (equal unread-command-events '(?a ?s ?y ?n ?c))))
