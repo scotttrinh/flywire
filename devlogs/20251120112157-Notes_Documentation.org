@@ -1,0 +1,15 @@
+* Documentation Update
+
+** Problem
+The project lacked a standard ~README.org~ for users and contributors.
+
+** Changes
+- Created ~README.org~ with:
+  - Introduction to ~emacs-driver~ (Observer/Executor architecture).
+  - Installation instructions (Doom Emacs, Straight.el, Manual).
+  - Usage example (~emacs-driver-do~).
+  - Development and contribution guide (referencing ~AGENT.md~ and Nix workflow).
+
+** Verification
+- Visually inspected ~README.org~.
+- Confirmed alignment with ~AGENT.md~ and project structure.
