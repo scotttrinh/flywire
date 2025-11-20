@@ -27,6 +27,7 @@
           epkgs.ert-async
           epkgs.dash
           epkgs.s
+          epkgs.package-lint
           propcheckPkg
         ]);
       in
@@ -40,6 +41,12 @@
         apps.test = flake-utils.lib.mkApp {
           drv = pkgs.writeShellScriptBin "run-tests" ''
             ${myEmacs}/bin/emacs -q --batch -l test/run-tests.el
+          '';
+        };
+
+        apps.lint = flake-utils.lib.mkApp {
+          drv = pkgs.writeShellScriptBin "run-lint" ''
+            ${myEmacs}/bin/emacs -q --batch -l test/run-lint.el
           '';
         };
       }

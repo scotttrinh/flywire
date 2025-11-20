@@ -42,10 +42,11 @@ Working notes for future agents contributing to emacs-driver. This doc explains 
 
 - Byte-compile clean on local Emacs
 - ERT tests: start small, and cover defensively
+- Linting: run `nix run .#lint` to check for style, packaging, and byte-compilation issues.
 - Keep UI non-blocking
 
 ### Running the automated test suite
- 
+
  - Default runner:  
    ```sh
    nix run .#test
@@ -58,6 +59,17 @@ Working notes for future agents contributing to emacs-driver. This doc explains 
    Dependencies (including `ert-async` and `propcheck`) are provided by the Nix environment.
  - The runner prints every asynchronous test’s progress. When debugging, re-run with `EDEBUG=1` or add `(message ...)` calls, but remove noisy logging before you ship.
  - If you add new tests, make sure they can run in batch (no interactive prompts, no buffers left behind).
+
+### Running the linter
+
+ - Default runner:
+   ```sh
+   nix run .#lint
+   ```
+   This checks for:
+   - `checkdoc` (docstring style)
+   - `package-lint` (packaging best practices)
+   - `byte-compile` (syntax and compilation warnings/errors)
 
 ## Devlogs: When To Write Notes
 
