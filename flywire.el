@@ -39,6 +39,11 @@
 (require 'flywire-action)
 (require 'flywire-async)
 
+(defgroup flywire nil
+  "Arms and eyes for automated agents."
+  :group 'tools
+  :prefix "flywire-")
+
 (defun flywire--execute-step (step)
   "Execute STEP, which comes from a parsed JSON instruction.
 STEP should be an alist with at least an `action` entry."
@@ -54,25 +59,30 @@ STEP should be an alist with at least an `action` entry."
      (error "Flywire: unknown action %S" step))))
 
 ;;;###autoload
-(defun flywire-do (instruction-json)
-  "Execute INSTRUCTION-JSON and return a fresh snapshot plist.
-Instructions are JSON arrays of action objects.  The function ensures
-inputs are queued before commands run, then returns
+(defun flywire-do (instructions)
+  "Execute INSTRUCTIONS and return a fresh snapshot plist.
+INSTRUCTIONS can be a JSON string or a list of action alists.
+The function ensures inputs are queued before commands run, then returns
 `flywire-snapshot-get-snapshot` for the updated state."
-  (let ((instructions (json-parse-string instruction-json :object-type 'alist :array-type 'list)))
-    (dolist (step instructions)
+  (let ((steps (if (stringp instructions)
+                   (json-parse-string instructions :object-type 'alist :array-type 'list)
+                 instructions)))
+    (dolist (step steps)
       (flywire--execute-step step))
     (flywire-snapshot-get-snapshot)))
 
 ;;;###autoload
-(defun flywire-do-async (instruction-json)
-  "Execute INSTRUCTION-JSON asynchronously.
+(defun flywire-do-async (instructions)
+  "Execute INSTRUCTIONS asynchronously.
+INSTRUCTIONS can be a JSON string or a list of action alists.
 Returns \\='started symbol immediately.  The actions are scheduled on a timer.
 State updates will be pushed via `flywire-async-output-handler`."
-  (let ((instructions (json-parse-string instruction-json :object-type 'alist :array-type 'list)))
+  (let ((steps (if (stringp instructions)
+                   (json-parse-string instructions :object-type 'alist :array-type 'list)
+                 instructions)))
     (run-with-timer 0 nil
                     (lambda ()
-                      (dolist (step instructions)
+                      (dolist (step steps)
                         (flywire--execute-step step)))))
   'started)
 

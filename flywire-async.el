@@ -35,8 +35,11 @@
 (require 'flywire-snapshot)
 (require 'json)
 
-(defvar flywire-async-output-handler #'flywire-async-default-output-handler
-  "Function to call with the snapshot plist when state changes.")
+(defcustom flywire-async-output-handler #'flywire-async-default-output-handler
+  "Function to call with the snapshot plist when state changes.
+The function receives a single argument: the snapshot plist."
+  :type 'function
+  :group 'flywire)
 
 (defun flywire-async-default-output-handler (snapshot)
   "Default handler: print SNAPSHOT as JSON to stdout."

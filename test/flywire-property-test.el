@@ -112,4 +112,80 @@
     ;; We just assert we reached here without signal
     (propcheck-should t)))
 
+(propcheck-deftest flywire-prop-do-alist-instructions ()
+  "flywire-do should accept alist instructions and execute actions."
+  (let ((txt (propcheck-generate-string "text")))
+    (setq unread-command-events nil)
+    (let* ((instruction `((action . "type") (text . ,txt)))
+           (instructions (list instruction)))
+       ;; Mock snapshot to avoid side effects or complex return values
+       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+         (let ((result (flywire-do instructions)))
+           (propcheck-should (equal result '(:mock-snapshot t)))
+           (propcheck-should (equal unread-command-events (string-to-list txt))))))))
+
+(propcheck-deftest flywire-prop-do-alist-multiple-actions ()
+  "flywire-do should execute multiple actions from an alist."
+  (let ((txt1 (propcheck-generate-string "text1"))
+        (txt2 (propcheck-generate-string "text2")))
+    (setq unread-command-events nil)
+    (let* ((instructions `(((action . "type") (text . ,txt1))
+                           ((action . "type") (text . ,txt2)))))
+       ;; Mock snapshot
+       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+         (let ((result (flywire-do instructions)))
+           (propcheck-should (equal result '(:mock-snapshot t)))
+           (propcheck-should (equal unread-command-events (append (string-to-list txt1) (string-to-list txt2)))))))))
+
+(propcheck-deftest flywire-prop-do-alist-mixed-keys-and-text ()
+  "flywire-do should handle mixed key and text actions in an alist."
+  (let ((txt (propcheck-generate-string "text")))
+    ;; Only keep alphanumeric chars for simple key simulation
+    (setq txt (replace-regexp-in-string "[^a-zA-Z0-9]" "" txt))
+    (when (not (string-empty-p txt))
+      (setq unread-command-events nil)
+      (let* ((instructions `(((action . "type") (text . ,txt))
+                             ((action . "key") (chord . "RET")))))
+         ;; Mock snapshot
+         (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+           (let ((result (flywire-do instructions)))
+             (propcheck-should (equal result '(:mock-snapshot t)))
+             (let ((expected (append (string-to-list txt) (listify-key-sequence (kbd "RET")))))
+               (propcheck-should (equal unread-command-events expected)))))))))
+
+(propcheck-deftest flywire-prop-do-alist-invalid-action ()
+  "flywire-do should signal error on invalid action type."
+  (let ((invalid-action (propcheck-generate-string "invalid-action")))
+    ;; Ensure string isn't one of the valid actions
+    (while (member invalid-action '("type" "key" "command"))
+      (setq invalid-action (propcheck-generate-string "invalid-action")))
+    
+    (let* ((instruction `((action . ,invalid-action)))
+           (instructions (list instruction)))
+      (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+        (should-error (flywire-do instructions))))))
+
+(propcheck-deftest flywire-prop-do-json-invalid-action ()
+  "flywire-do should signal error on invalid action type in JSON."
+  (let ((invalid-action (propcheck-generate-string "invalid-action")))
+    ;; Ensure string isn't one of the valid actions
+    (while (member invalid-action '("type" "key" "command"))
+      (setq invalid-action (propcheck-generate-string "invalid-action")))
+    
+    (let* ((instruction `((action . ,invalid-action)))
+           (json-str (json-encode (vector instruction))))
+      (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+        (should-error (flywire-do json-str))))))
+
+(propcheck-deftest flywire-prop-do-json-invalid-syntax ()
+  "flywire-do should signal error on malformed JSON."
+  (let ((garbage (propcheck-generate-string "garbage")))
+    ;; Ensure it's not coincidentally valid JSON
+    (while (ignore-errors (json-parse-string garbage) t)
+      (setq garbage (concat "{" (propcheck-generate-string "garbage"))))
+    
+    (should-error (flywire-do garbage) :type 'json-error)))
+
 (provide 'test/flywire-property-test)
+;;; test/flywire-property-test.el ends here
+

@@ -55,11 +55,60 @@ Add it to your ~load-path~ and require it:
 
 * Usage
 
-The core entry point is ~flywire-do~, which accepts a JSON string describing a sequence of actions.
+The core entry point is ~flywire-do~, which accepts either a JSON string or a native Elisp list describing a sequence of actions.
 
 #+begin_src elisp
+;; Using JSON string
 (flywire-do
  "[{\"action\": \"type\", \"text\": \"Hello World\"}, {\"action\": \"key\", \"chord\": \"RET\"}]")
+
+;; Using Elisp structure (faster, no parsing overhead)
+(flywire-do
+ '(((action . "type") (text . "Hello World"))
+   ((action . "key") (chord . "RET"))))
+#+end_src
+
+* Configuration
+
+Flywire is designed to be configurable to manage the trade-off between context availability and resource usage (e.g., token counts for LLM agents).
+
+** Snapshot Content
+
+You can control how much information is gathered in each snapshot using ~flywire-snapshot-collectors~.
+
+#+begin_src elisp
+;; Only collect buffer info and cursor position (minimal token usage)
+(setq flywire-snapshot-collectors '(buffer-info cursor))
+
+;; Default: collect everything
+(setq flywire-snapshot-collectors
+      '(buffer-info content cursor minibuffer window-configuration))
+#+end_src
+
+** Context Window
+
+When capturing buffer content, you can limit the size of the text window to avoid overwhelming the agent.
+
+#+begin_src elisp
+;; Number of lines to capture above and below the cursor (default: 50)
+(setq flywire-snapshot-context-lines 20)
+
+;; Maximum characters per line to capture before truncating (default: 1000)
+;; This is useful for preventing "minified file" issues.
+(setq flywire-snapshot-max-line-length 500)
+#+end_src
+
+** Async Handling
+
+If you are using ~flywire-do-async~ or the ~flywire-async-mode~, you can customize how state updates are emitted.
+
+#+begin_src elisp
+;; Define a custom handler for snapshot updates
+(defun my-agent-handler (snapshot)
+  (let ((json-string (json-encode snapshot)))
+    (process-send-string my-agent-process json-string)))
+
+(setq flywire-async-output-handler #'my-agent-handler)
 #+end_src
 
 * Development

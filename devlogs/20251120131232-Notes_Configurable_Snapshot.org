@@ -1,0 +1,33 @@
+#+TITLE: Notes: Configurable Snapshot and Native Structure Support
+#+DATE: [2025-11-20 Thu 13:12]
+#+AUTHOR: Amp
+
+* Overview
+We improved the flexibility and performance of ~flywire~ by introducing configuration options for snapshots and adding support for native Elisp data structures in the command interface.
+
+* Changes
+** Configuration
+We introduced a new customization group ~flywire~ with the following variables:
+- ~flywire-snapshot-context-lines~ (default: 50): Controls the number of lines captured around the cursor.
+- ~flywire-snapshot-max-line-length~ (default: 1000): Truncates long lines to prevent token exhaustion.
+- ~flywire-snapshot-collectors~: A list of symbols (~buffer-info~, ~content~, ~cursor~, ~minibuffer~, ~window-configuration~) determining which data is included in the snapshot.
+- ~flywire-async-output-handler~: Converted to a ~defcustom~ to allow easy overriding of the async output mechanism.
+
+** Native Structure Support
+- Updated ~flywire-do~ and ~flywire-do-async~ to accept Emacs Lisp alists (e.g., ~'((action . "type") (text . "foo"))~) in addition to JSON strings.
+- This avoids the overhead of JSON serialization/deserialization when the agent is running within the same Emacs process or can communicate via Lisp structures.
+
+** Testing
+- Added ~test/flywire-config-test.el~ to verify configuration behaviors.
+- Expanded ~test/flywire-property-test.el~ with property tests for:
+  - Native alist instruction execution.
+  - Mixed "type" and "key" actions in alists.
+  - Error handling for invalid action types (both alist and JSON).
+  - Error handling for malformed JSON inputs.
+
+* Verification
+- Ran full test suite: ~nix run .#test~ (28 tests passed).
+- Ran linter: ~nix run .#lint~ (passed).
+
+* Follow-up
+- The documentation in ~README.org~ has been updated to reflect these new capabilities.
