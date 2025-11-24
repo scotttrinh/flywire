@@ -2,20 +2,23 @@
 
 (require 'flywire)
 (require 'flywire-async)
+(require 'ert-async)
 
 (ert-deftest flywire-async-do-returns-started ()
   "Async execution should return 'started and schedule timer."
   (should (eq (flywire-do-async '()) 'started)))
 
-(ert-deftest flywire-async-execution ()
+(ert-deftest-async flywire-async-execution (done)
   "Async execution should eventually run steps."
   (setq unread-command-events nil)
   (let* ((json-str "[{\"action\": \"type\", \"text\": \"async\"}]")
          (parsed (json-parse-string json-str :object-type 'alist :array-type 'list)))
     (flywire-do-async parsed))
-  ;; Wait for timer to run. In batch mode, sit-for should run timers.
-  (sit-for 0.2)
-  (should (equal unread-command-events '(?a ?s ?y ?n ?c))))
+  ;; Wait for timer to run.
+  (run-with-timer 0.2 nil
+                  (lambda ()
+                    (should (equal unread-command-events '(?a ?s ?y ?n ?c)))
+                    (funcall done))))
 
 (ert-deftest flywire-async-minibuffer-monitor ()
   "Minibuffer setup should trigger output handler."

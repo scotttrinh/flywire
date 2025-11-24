@@ -1,0 +1,221 @@
+* Testing Elisp with Nix: A Guide to ERT, Async, and Property-Based Testing
+
+This devlog documents the complete test setup for flywire and serves as a blueprint for Elisp projects seeking reproducible, automated testing. We combine Nix (for dependency isolation), ERT (Emacs' standard test runner), ert-async (for non-blocking tests), and propcheck (for property-based testing).
+
+** Architecture Overview
+
+The test system consists of three layers:
+
+1. **Nix environment** (=flake.nix=): Defines an isolated Emacs with all dependencies pre-installed.
+2. **Test runners** (=test/run-tests.el=, =test/run-lint.el=): Load test files and run them in batch mode.
+3. **Test suites** (=test/*-test.el=): Individual test files using ERT, ert-async, and propcheck.
+
+*** Running Tests
+
+Three commands:
+
+- =nix run .#test= – Run all tests (preferred, fully reproducible).
+- =nix develop && emacs -q --batch -l test/run-tests.el= – Manual in a dev shell.
+- =nix run .#lint= – Check style, packaging, and byte-compilation.
+
+** Nix Setup: Reproducible Dependencies
+
+The =flake.nix= file defines:
+
+- **Custom Emacs**: Assembled via =pkgs.emacsWithPackages=, bundling ert-async, dash, s, package-lint, and propcheck.
+- **Propcheck derivation**: Since propcheck isn't in nixpkgs, we build it on-the-fly using =pkgs.runCommand=, extracting the source from a GitHub flake input and installing to the Emacs site-lisp directory.
+- **Shell apps**: Two Nix apps—test and lint—wrap Emacs invocations with all dependencies pre-loaded, eliminating package-el bootstrapping.
+
+*** Key pattern: Inline derivation for niche packages
+
+When a Lisp library isn't available in nixpkgs, derive it directly:
+
+#+begin_src nix
+propcheckPkg = pkgs.runCommand "propcheck-0.1" { src = propcheck; } ''
+  mkdir -p $out/share/emacs/site-lisp/elpa/propcheck-0.1
+  cp $src/propcheck.el $out/share/emacs/site-lisp/elpa/propcheck-0.1/
+  echo "(define-package \"propcheck\" \"0.1\" \"...\" '((dash \"2.12\")))" > $out/...-pkg.el
+'';
+#+end_src
+
+This ensures propcheck (and its transitive dependency, dash) are available without manual =package-install= at test time.
+
+** Test Runners: Batch-Mode Orchestration
+
+*** test/run-tests.el
+
+Executed by =${myEmacs}/bin/emacs -q --batch -l test/run-tests.el=, this file:
+
+1. Computes absolute paths (not relative; important in batch mode).
+2. Requires dependencies: =ert-async=, =dash=, =s=, =propcheck= (already available in Nix).
+3. Discovers all files matching =*-test.el= in the test directory.
+4. Loads them dynamically: =load file nil nil t= (the final =t= forces load without requiring a feature).
+5. Invokes =ert-run-tests-batch-and-exit=, which runs all =ert-deftest= and =propcheck-deftest= forms and exits with status code 0 (success) or 1 (failure).
+
+**Critical detail**: Don't use =require= to load test files if they don't provide a feature. Use =load= with the fourth argument as =t=.
+
+*** test/run-lint.el
+
+Similarly batch-executed, this runner:
+
+1. Loads the three linters: =checkdoc= (docstring style), =package-lint= (packaging best practices), and =bytecomp= (syntax checking).
+2. Iterates over source files (=flywire*.el=), loading each into a temporary buffer.
+3. Collects errors in a list (=lint-errors=).
+4. For byte-compilation, copies files to a temp directory and compiles them there (avoids polluting the source tree).
+5. Exits with code 0 if clean, code 1 if errors found.
+
+**Lint strategy**: By running all three linters and deferring the exit code, we present all issues at once rather than failing fast.
+
+** Test Patterns: ERT, Async, and Property-Based
+
+*** Standard unit tests (ERT)
+
+Use =ert-deftest= for deterministic, synchronous tests:
+
+#+begin_src elisp
+(ert-deftest flywire-snapshot-structure ()
+  "Snapshot should return expected structure."
+  (let ((snapshot (flywire-snapshot-get-snapshot)))
+    (should (plist-member snapshot :buffer-info))
+    (should (plist-member snapshot :cursor))))
+#+end_src
+
+ERT supports =should=, =should-not=, =should-error=, and other assertion macros. Tests run sequentially and report failures with full backtraces.
+
+*** Async tests (ert-async)
+
+Use =ert-deftest-async= when code involves timers or deferred execution:
+
+#+begin_src elisp
+(ert-deftest-async flywire-async-execution (done)
+  "Async execution should eventually run steps."
+  (setq unread-command-events nil)
+  (let* ((json-str "[{\"action\": \"type\", \"text\": \"async\"}]")
+         (parsed (json-parse-string json-str :object-type 'alist :array-type 'list)))
+    (flywire-do-async parsed))
+  ;; Wait for timer to run.
+  (run-with-timer 0.2 nil
+                  (lambda ()
+                    (should (equal unread-command-events '(?a ?s ?y ?n ?c)))
+                    (funcall done))))
+#+end_src
+
+The =done= callback marks the test as complete. Use =run-with-timer= to schedule assertions after async side effects resolve. The test runner waits for all =done= calls before exiting.
+
+**Guidance**: Keep async delays short (0.1–0.3s) to avoid test timeouts. If your code is genuinely long-running, mock the slow part.
+
+*** Property-based tests (propcheck)
+
+Use =propcheck-deftest= to verify that a function behaves correctly across random inputs:
+
+#+begin_src elisp
+(propcheck-deftest flywire-prop-push-input ()
+  "Pushing any ASCII string input should queue corresponding events."
+  (let ((s (propcheck-generate-string "input")))
+    (setq unread-command-events nil)
+    (flywire-action-push-input s)
+    (let ((expected (string-to-list s)))
+      (propcheck-should (equal unread-command-events expected)))))
+#+end_src
+
+Propcheck generates 100 random test cases per deftest. Use:
+
+- =propcheck-generate-string= – Random ASCII string.
+- =propcheck-generate-integer= – Integer in a range.
+- =propcheck-generate-proper-list= – List of generated values.
+- =propcheck-should= – Assertion that must hold for all cases.
+
+**Key benefit**: Property tests catch edge cases (empty strings, boundary values, etc.) that unit tests might miss. When a property test fails, propcheck shrinks the failing input to the minimal case that exhibits the problem.
+
+*** Mocking and isolation
+
+In property tests and async tests, mock external functions to avoid side effects:
+
+#+begin_src elisp
+(cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) 
+           (lambda () '(:mock-snapshot t))))
+  (let ((result (flywire-do instructions)))
+    (propcheck-should (equal result '(:mock-snapshot t)))))
+#+end_src
+
+=cl-letf= dynamically rebinds a function for the duration of a test, restoring it afterward. This isolates tests and speeds them up.
+
+** Workflow: Writing and Debugging Tests
+
+1. **Create a test file** (=test/my-feature-test.el=) and include:
+   #+begin_src elisp
+   ;;; test/my-feature-test.el --- Tests for my-feature  -*- lexical-binding: t; -*-
+   
+   (require 'my-feature)
+   (require 'ert-async)  ;; if using async tests
+   (require 'propcheck)  ;; if using property tests
+   
+   (ert-deftest my-feature-test () ...)
+   (ert-deftest-async my-async-test (done) ...)
+   (propcheck-deftest my-prop-test () ...)
+   
+   (provide 'test/my-feature-test)
+   ;;; my-feature-test.el ends here
+   #+end_src
+
+2. **Run tests locally**:
+   #+begin_src sh
+   nix run .#test
+   #+end_src
+   or, in a dev shell:
+   #+begin_src sh
+   nix develop
+   emacs -q --batch -l test/run-tests.el
+   #+end_src
+
+3. **Debug interactively** (if needed):
+   #+begin_src sh
+   nix develop
+   emacs -q
+   M-x load-file test/my-feature-test.el
+   M-x ert RET my-feature-test RET  ;; runs a single test in the UI
+   #+end_src
+
+4. **Iterate**: Edit, run =nix run .#test=, fix failures.
+
+** Common Pitfalls and Solutions
+
+| Issue | Root Cause | Solution |
+|-------|-----------|----------|
+| Tests fail with "Cannot open load file" | Batch Emacs doesn't have working directory context; paths are absolute. | Use =expand-file-name= with =(file-name-directory load-file-name)= to compute absolute paths at load time. |
+| Property tests timeout | Generators create too many cases or shrinking loops forever. | Constrain generators (e.g., max list length, max string length). Use =propcheck-should t= in complex tests to just verify we reach the end. |
+| Async tests hang | =done= callback never invoked or scheduled too late. | Ensure =done= is called in the timer. Set a reasonable delay (0.1–0.3s). If tests still hang, check =run-with-timer= is being reached. |
+| Package-lint false positives | Libraries use non-standard naming (e.g., =foo/bar=). | In =run-lint.el=, filter warnings by type and message pattern. See example: =(unless (and (eq type 'warning) (string-match-p "redundant" msg)) ...)=. |
+| Byte-compile errors in batch | Missing load-path entries or unloaded dependencies. | Ensure all dependencies are =require='d before compiling. Copy files to a temp directory and compile there to avoid stale .elc files. |
+
+** Extending the Setup
+
+To add a new test suite:
+
+1. Create =test/my-module-test.el= with =(require 'flywire)= at the top.
+2. Write tests as =ert-deftest= (or =ert-deftest-async= / =propcheck-deftest=).
+3. End with =(provide 'test/my-module-test)=.
+4. Run =nix run .#test=; the runner auto-discovers the file.
+
+To add a new linter:
+
+1. Edit =test/run-lint.el= and add a new section for the linter (e.g., =checkdoc=, =package-lint=).
+2. Collect errors in =lint-errors=.
+3. Exit with code 0 or 1 at the end.
+
+To add a new dependency:
+
+1. If the package is in nixpkgs, add it to the emacsWithPackages list in =flake.nix=.
+2. If not, create an inline derivation (as done for propcheck) and reference it.
+3. Require the dependency in the appropriate test runner.
+
+** Conclusion
+
+This setup provides:
+
+- **Reproducibility**: Nix ensures the same Emacs, same versions, same dependencies every run.
+- **Completeness**: ERT for unit tests, ert-async for concurrency, propcheck for edge cases, linters for code quality.
+- **Clarity**: Test discovery is automatic; runners are single-command invocations.
+- **Extensibility**: Add tests, dependencies, or linters without modifying runner logic.
+
+For projects using similar technologies (Elisp, Nix, Emacs), this pattern—batch runners, dynamic discovery, mocking, and offline dependencies—provides a solid foundation.
