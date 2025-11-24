@@ -46,17 +46,35 @@ Lines longer than this will be truncated to avoid token exhaustion."
   :type 'integer
   :group 'flywire)
 
+(defcustom flywire-snapshot-profiles
+  '((minimal . (buffer-info cursor minibuffer))
+    (default . (buffer-info content cursor minibuffer window-configuration messages))
+    (rich . (buffer-info content visible-content cursor minibuffer window-configuration messages processes)))
+  "Mapping of snapshot profile names to collector symbols."
+  :type '(alist :key-type symbol :value-type (repeat symbol))
+  :group 'flywire)
+
 (defcustom flywire-snapshot-collectors
   '(buffer-info content cursor minibuffer window-configuration)
   "List of data collectors to run when generating a snapshot.
-Valid symbols are: `buffer-info', `content', `cursor', `minibuffer',
-`window-configuration'."
+Valid symbols are: `buffer-info', `content', `visible-content', `cursor',
+`minibuffer', `window-configuration', `messages', `processes'.
+This variable is respected if no specific profile is requested."
   :type '(set (const buffer-info)
               (const content)
+              (const visible-content)
               (const cursor)
               (const minibuffer)
-              (const window-configuration))
+              (const window-configuration)
+              (const messages)
+              (const processes))
   :group 'flywire)
+
+(defvar flywire-snapshot-collect-hook nil
+  "Hook run after core snapshot collection.
+The functions are called with one argument, the current snapshot plist.
+They can destructively modify the plist (e.g. using `nconc` or `plist-put`)
+to add extensions.")
 
 (defun flywire-snapshot--safe-run (fn)
   "Run FN and return its value, returning nil if FN signals an error."
@@ -88,6 +106,25 @@ Respects `flywire-snapshot-max-line-length`."
             (forward-line 1)))))
     (mapconcat #'identity (nreverse lines) "\n")))
 
+(defun flywire-snapshot--visible-content ()
+  "Return text currently visible in the selected window."
+  (let ((start (window-start))
+        (end (window-end)))
+    (if (and start end (< start end))
+        (buffer-substring-no-properties start end)
+      "")))
+
+(defun flywire-snapshot--messages (&optional count)
+  "Return the last COUNT lines from *Messages* buffer.
+Defaults to 10."
+  (let ((n (or count 10)))
+    (with-current-buffer (get-buffer-create "*Messages*")
+      (save-excursion
+        (goto-char (point-max))
+        (let ((end (point))
+              (start (progn (forward-line (- n)) (point))))
+          (buffer-substring-no-properties start end))))))
+
 (defun flywire-snapshot--build-minibuffer-state ()
   "Return plist describing the minibuffer, or nil if inactive."
   (let ((window (active-minibuffer-window)))
@@ -105,15 +142,30 @@ Respects `flywire-snapshot-max-line-length`."
                     :file (buffer-file-name))))
           (window-list nil 0)))
 
+(defun flywire-snapshot--process-info ()
+  "Return list of active processes."
+  (mapcar (lambda (proc)
+            (list :name (process-name proc)
+                  :command (process-command proc)
+                  :status (process-status proc)))
+          (process-list)))
+
 ;;;###autoload
-(defun flywire-snapshot-get-snapshot ()
+(defun flywire-snapshot-get-snapshot (&optional profile collectors)
   "Return a plist describing the current frame and buffer context.
 The plist is safe to JSON serialize and omits overwhelming data (only a
 window of lines around point is captured).
-The content included is determined by `flywire-snapshot-collectors'."
-  (let ((buffer (current-buffer))
-        (result nil))
-    (when (memq 'buffer-info flywire-snapshot-collectors)
+
+PROFILE (symbol) selects a set of collectors from `flywire-snapshot-profiles'.
+COLLECTORS (list of symbols) overrides the profile.
+If neither is provided, `flywire-snapshot-collectors` is used."
+  (let* ((active-collectors
+          (or collectors
+              (and profile (cdr (assoc profile flywire-snapshot-profiles)))
+              flywire-snapshot-collectors))
+         (buffer (current-buffer))
+         (result nil))
+    (when (memq 'buffer-info active-collectors)
       (setq result
             (plist-put result :buffer-info
                        (flywire-snapshot--safe-run
@@ -122,14 +174,21 @@ The content included is determined by `flywire-snapshot-collectors'."
                             (list :name (buffer-name)
                                   :major-mode major-mode
                                   :file (or buffer-file-name ""))))))))
-    (when (memq 'content flywire-snapshot-collectors)
+    (when (memq 'content active-collectors)
       (setq result
             (plist-put result :content
                        (flywire-snapshot--safe-run
                         (lambda ()
                           (with-current-buffer buffer
                             (flywire-snapshot--windowed-content)))))))
-    (when (memq 'cursor flywire-snapshot-collectors)
+    (when (memq 'visible-content active-collectors)
+      (setq result
+            (plist-put result :visible-content
+                       (flywire-snapshot--safe-run
+                        (lambda ()
+                          (with-current-buffer buffer
+                            (flywire-snapshot--visible-content)))))))
+    (when (memq 'cursor active-collectors)
       (setq result
             (plist-put result :cursor
                        (flywire-snapshot--safe-run
@@ -138,14 +197,24 @@ The content included is determined by `flywire-snapshot-collectors'."
                             (list :point (point)
                                   :line (line-number-at-pos)
                                   :column (current-column))))))))
-    (when (memq 'minibuffer flywire-snapshot-collectors)
+    (when (memq 'minibuffer active-collectors)
       (setq result
             (plist-put result :minibuffer
                        (flywire-snapshot--safe-run #'flywire-snapshot--build-minibuffer-state))))
-    (when (memq 'window-configuration flywire-snapshot-collectors)
+    (when (memq 'window-configuration active-collectors)
       (setq result
             (plist-put result :window-configuration
                        (flywire-snapshot--safe-run #'flywire-snapshot--window-list-info))))
+    (when (memq 'messages active-collectors)
+      (setq result
+            (plist-put result :messages
+                       (flywire-snapshot--safe-run #'flywire-snapshot--messages))))
+    (when (memq 'processes active-collectors)
+      (setq result
+            (plist-put result :processes
+                       (flywire-snapshot--safe-run #'flywire-snapshot--process-info))))
+    
+    (run-hook-with-args 'flywire-snapshot-collect-hook result)
     result))
 
 (provide 'flywire-snapshot)

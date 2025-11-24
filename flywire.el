@@ -116,26 +116,26 @@ ARGS can include :id, :env, :snapshot-profile, :safety-policy, :events."
 (defun flywire--execute-step (step)
   "Execute STEP, which comes from a parsed JSON instruction.
 STEP should be an alist with at least an `action` entry."
-  (pcase (alist-get 'action step nil nil #'string=)
+  (pcase (alist-get "action" step nil nil #'string=)
     ("type"
-     (flywire-action-push-input (alist-get 'text step)))
+     (flywire-action-push-input (alist-get "text" step nil nil #'string=)))
     ("key"
-     (flywire-action-simulate-keys (alist-get 'chord step)))
+     (flywire-action-simulate-keys (alist-get "chord" step nil nil #'string=)))
     ("command"
      (flywire-action-execute-tool "run_command"
-                                       `((name . ,(alist-get 'name step)))))
+                                       `((name . ,(alist-get "name" step nil nil #'string=)))))
     (_
      (error "Flywire: unknown action %S" step))))
 
 (defun flywire--capture-messages (thunk)
   "Run THUNK and return any new text added to *Messages*."
-  (let ((msg-buf (get-buffer-create "*Messages*")))
+  (let* ((msg-buf (get-buffer-create "*Messages*"))
+         (start (with-current-buffer msg-buf (point-max))))
+    (funcall thunk)
     (with-current-buffer msg-buf
-      (let ((start (point-max)))
-        (funcall thunk)
-        (if (> (point-max) start)
-            (buffer-substring-no-properties start (point-max))
-          nil)))))
+      (if (> (point-max) start)
+          (buffer-substring-no-properties start (point-max))
+        nil))))
 
 (defun flywire--execute-steps-with-result (session instructions &optional opts)
   "Execute INSTRUCTIONS using SESSION and OPTS.
@@ -171,21 +171,30 @@ SESSION and OPTS are currently ignored."
 
 (defun flywire-session-exec (session instructions &optional opts)
   "Run INSTRUCTIONS synchronously in SESSION context.
-Returns a structured result plist."
-  (let ((env (flywire-session-env session)))
+Returns a structured result plist.
+OPTS can contain :snapshot-after (boolean or profile name)."
+  (let ((env (flywire-session-env session))
+        (session-profile (plist-get (flywire-session-options session) :snapshot-profile)))
     (funcall (flywire-env-run env)
              (lambda ()
                (let ((res (flywire--execute-steps-with-result session instructions opts)))
-                 (when (plist-get opts :snapshot-after)
-                   (setq res (plist-put res :snapshot
-                                        (funcall (flywire-env-snapshot env)))))
+                 (let ((snap-opt (plist-get opts :snapshot-after)))
+                   (when snap-opt
+                     (let ((profile (if (and (symbolp snap-opt) (not (eq snap-opt t)))
+                                        snap-opt
+                                      session-profile)))
+                       (setq res (plist-put res :snapshot
+                                            (funcall (flywire-env-snapshot env) profile))))))
                  res)))))
 
 (defun flywire-session-start-async (session instructions &optional opts)
   "Run INSTRUCTIONS asynchronously in SESSION context.
-Returns \\='started immediately.  OPTS are currently ignored."
+Returns \='started immediately.
+If :snapshot-profile is set in SESSION options, snapshots are emitted with
+:step-end events."
   (ignore opts)
-  (let ((env (flywire-session-env session)))
+  (let ((env (flywire-session-env session))
+        (session-profile (plist-get (flywire-session-options session) :snapshot-profile)))
     (funcall (flywire-env-run env)
              (lambda ()
                (run-with-timer 0 nil
@@ -194,9 +203,13 @@ Returns \\='started immediately.  OPTS are currently ignored."
                                  (dolist (step instructions)
                                    (flywire--emit-event session `(:type :step-start :session ,session :action ,step))
                                    (condition-case err
-                                       (progn
-                                         (flywire--execute-step step)
-                                         (flywire--emit-event session `(:type :step-end :session ,session :action ,step :status :ok)))
+                                       (let ((step-res nil)) (flywire--execute-step step)
+                                         (setq step-res `(:type :step-end :session ,session :action ,step :status :ok))
+                                         ;; Attach snapshot if configured
+                                         (when session-profile
+                                           (setq step-res (plist-put step-res :snapshot
+                                                                     (funcall (flywire-env-snapshot env) session-profile))))
+                                         (flywire--emit-event session step-res))
                                      (error
                                       (flywire--emit-event session `(:type :step-end :session ,session :action ,step :status :error :error ,err)))))
                                  (flywire--emit-event session `(:type :exec-complete :session ,session)))))))

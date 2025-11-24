@@ -95,11 +95,11 @@
   "flywire-do should execute actions from parsed JSON."
   (let ((txt (propcheck-generate-string "text")))
     (setq unread-command-events nil)
-    (let* ((instruction `((action . "type") (text . ,txt)))
+    (let* ((instruction `(("action" . "type") ("text" . ,txt)))
            (json-str (json-encode (vector instruction)))
            (parsed (json-parse-string json-str :object-type 'alist :array-type 'list)))
        ;; Mock snapshot to avoid side effects or complex return values
-       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda (&rest _args) '(:mock-snapshot t))))
          (let ((result (flywire-do parsed)))
            (propcheck-should (equal result '(:mock-snapshot t)))
            (propcheck-should (equal unread-command-events (string-to-list txt))))))))
@@ -117,10 +117,10 @@
   "flywire-do should accept alist instructions and execute actions."
   (let ((txt (propcheck-generate-string "text")))
     (setq unread-command-events nil)
-    (let* ((instruction `((action . "type") (text . ,txt)))
+    (let* ((instruction `(("action" . "type") ("text" . ,txt)))
            (instructions (list instruction)))
        ;; Mock snapshot to avoid side effects or complex return values
-       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda (&rest _args) '(:mock-snapshot t))))
          (let ((result (flywire-do instructions)))
            (propcheck-should (equal result '(:mock-snapshot t)))
            (propcheck-should (equal unread-command-events (string-to-list txt))))))))
@@ -130,13 +130,18 @@
   (let ((txt1 (propcheck-generate-string "text1"))
         (txt2 (propcheck-generate-string "text2")))
     (setq unread-command-events nil)
-    (let* ((instructions `(((action . "type") (text . ,txt1))
-                           ((action . "type") (text . ,txt2)))))
+    (let* ((instructions `((("action" . "type") ("text" . ,txt1))
+                           (("action" . "type") ("text" . ,txt2)))))
        ;; Mock snapshot
-       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+       (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda (&rest _args) '(:mock-snapshot t))))
          (let ((result (flywire-do instructions)))
-           (propcheck-should (equal result '(:mock-snapshot t)))
-           (propcheck-should (equal unread-command-events (append (string-to-list txt1) (string-to-list txt2)))))))))
+           (unless (equal result '(:mock-snapshot t))
+             (message "Result mismatch: %S" result))
+           (let ((expected (append (string-to-list txt1) (string-to-list txt2))))
+             (unless (equal unread-command-events expected)
+               (message "Events mismatch. txt1: %S, txt2: %S. Expected: %S, Got: %S" txt1 txt2 expected unread-command-events))
+             (propcheck-should (equal result '(:mock-snapshot t)))
+             (propcheck-should (equal unread-command-events expected))))))))
 
 (propcheck-deftest flywire-prop-do-alist-mixed-keys-and-text ()
   "flywire-do should handle mixed key and text actions in an alist."
@@ -145,13 +150,17 @@
     (setq txt (replace-regexp-in-string "[^a-zA-Z0-9]" "" txt))
     (when (not (string-empty-p txt))
       (setq unread-command-events nil)
-      (let* ((instructions `(((action . "type") (text . ,txt))
-                             ((action . "key") (chord . "RET")))))
+      (let* ((instructions `((("action" . "type") ("text" . ,txt))
+                             (("action" . "key") ("chord" . "RET")))))
          ;; Mock snapshot
-         (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
+         (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda (&rest _args) '(:mock-snapshot t))))
            (let ((result (flywire-do instructions)))
-             (propcheck-should (equal result '(:mock-snapshot t)))
+             (unless (equal result '(:mock-snapshot t))
+               (message "Result mismatch: %S" result))
              (let ((expected (append (string-to-list txt) (listify-key-sequence (kbd "RET")))))
+               (unless (equal unread-command-events expected)
+                 (message "Events mismatch. Text: %S. Expected: %S, Got: %S" txt expected unread-command-events))
+               (propcheck-should (equal result '(:mock-snapshot t)))
                (propcheck-should (equal unread-command-events expected)))))))))
 
 (propcheck-deftest flywire-prop-do-alist-invalid-action ()
@@ -161,10 +170,16 @@
     (while (member invalid-action '("type" "key" "command"))
       (setq invalid-action (propcheck-generate-string "invalid-action")))
     
-    (let* ((instruction `((action . ,invalid-action)))
+    (let* ((instruction `(("action" . ,invalid-action)))
            (instructions (list instruction)))
-      (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
-        (should-error (flywire-do instructions))))))
+      (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda (&rest _args) '(:mock-snapshot t))))
+        (condition-case err
+            (progn
+              (flywire-do instructions)
+              (message "Did not error for invalid action: %S" invalid-action)
+              (propcheck-should nil)) ;; Fail if no error
+          (error
+           (propcheck-should t)))))))
 
 (propcheck-deftest flywire-prop-do-json-invalid-action ()
   "flywire-do should signal error on invalid action type in parsed JSON."
@@ -173,11 +188,17 @@
     (while (member invalid-action '("type" "key" "command"))
       (setq invalid-action (propcheck-generate-string "invalid-action")))
     
-    (let* ((instruction `((action . ,invalid-action)))
+    (let* ((instruction `(("action" . ,invalid-action)))
            (json-str (json-encode (vector instruction)))
            (parsed (json-parse-string json-str :object-type 'alist :array-type 'list)))
-      (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda () '(:mock-snapshot t))))
-        (should-error (flywire-do parsed))))))
+      (cl-letf (((symbol-function 'flywire-snapshot-get-snapshot) (lambda (&rest _args) '(:mock-snapshot t))))
+        (condition-case err
+            (progn
+              (flywire-do parsed)
+              (message "Did not error for invalid action: %S" invalid-action)
+              (propcheck-should nil)) ;; Fail if no error
+          (error
+           (propcheck-should t)))))))
 
 (propcheck-deftest flywire-prop-do-json-invalid-syntax ()
   "Parsing malformed JSON should signal error before reaching flywire."

@@ -87,5 +87,47 @@
       (should (eq (alist-get :status step-res) :ok))
       (should (equal (alist-get 'action (alist-get :action step-res)) "type")))))
 
+(ert-deftest flywire-snapshot-profiles ()
+  "Snapshot should respect profiles."
+  (let ((snap-minimal (flywire-snapshot-get-snapshot 'minimal))
+        (snap-default (flywire-snapshot-get-snapshot 'default)))
+    ;; Minimal has buffer-info but no content
+    (should (plist-member snap-minimal :buffer-info))
+    (should-not (plist-member snap-minimal :content))
+    (should-not (plist-member snap-minimal :window-configuration))
+    
+    ;; Default has content and window-configuration
+    (should (plist-member snap-default :content))
+    (should (plist-member snap-default :window-configuration))))
+
+(ert-deftest flywire-snapshot-messages ()
+  "Snapshot should capture messages."
+  (message "Test Message 1")
+  (message "Test Message 2")
+  (let* ((snap (flywire-snapshot-get-snapshot nil '(messages)))
+         (msgs (plist-get snap :messages)))
+    (should (stringp msgs))
+    (should (string-search "Test Message 1" msgs))
+    (should (string-search "Test Message 2" msgs))))
+
+(ert-deftest flywire-snapshot-visible-content ()
+  "Snapshot should capture visible content."
+  (with-temp-buffer
+    (insert "Visible\n")
+    ;; In batch mode, window manipulation might be limited, but we try.
+    (set-window-buffer (selected-window) (current-buffer))
+    (let* ((snap (flywire-snapshot-get-snapshot nil '(visible-content)))
+           (vis (plist-get snap :visible-content)))
+      (should (string-search "Visible" vis)))))
+
+(ert-deftest flywire-snapshot-extensions ()
+  "Snapshot hook should allow extensions."
+  (let ((hook-fn (lambda (s) (nconc s (list :extra "data")))))
+    (add-hook 'flywire-snapshot-collect-hook hook-fn)
+    (unwind-protect
+        (let ((snap (flywire-snapshot-get-snapshot 'minimal)))
+          (should (equal (plist-get snap :extra) "data")))
+      (remove-hook 'flywire-snapshot-collect-hook hook-fn))))
+
 (provide 'test/flywire-test)
 ;;; test/flywire-test.el ends here

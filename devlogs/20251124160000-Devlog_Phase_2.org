@@ -1,0 +1,46 @@
+* Devlog: Phase 2 Implementation - Snapshot Profiles and Extensions
+
+:AUTHOR: Codex
+:DATE: 2025-11-24
+
+** Overview
+
+We have completed Phase 2 of the Flywire refactor, introducing configurable snapshot profiles and extension hooks. This allows agents to request varying levels of detail about the Emacs state, from a minimal cursor/buffer summary to a rich snapshot including messages, processes, and visible content.
+
+** Key Changes
+
+*** 1. Snapshot Profiles (`flywire-snapshot.el`)
+
+- Introduced `flywire-snapshot-profiles` defcustom to map profile names (e.g., `minimal`, `default`, `rich`) to lists of collectors.
+- Updated `flywire-snapshot-get-snapshot` to accept an optional `profile` argument.
+- Added new collectors:
+  - `visible-content`: captures text currently visible in the window.
+  - `messages`: captures recent lines from the `*Messages*` buffer.
+  - `processes`: lists active processes.
+
+*** 2. Extension Hooks
+
+- Added `flywire-snapshot-collect-hook`, allowing external packages to inject custom data into the snapshot plist.
+
+*** 3. Session Integration (`flywire.el`)
+
+- Updated `flywire-session-exec` and `flywire-session-start-async` to respect the `:snapshot-profile` option in the session configuration.
+- Snapshots are now automatically collected and attached to results (sync) or events (async) based on the session profile.
+
+*** 4. Fixes and refinements
+
+- **String vs Symbol Keys**: Updated `flywire-do` (via `flywire--execute-step`) to robustly handle string keys in action alists, aligning with JSON parsing behavior. Previously, this caused failures in property-based tests where alists were generated with string keys.
+- **Error Handling**: Improved error handling in `flywire-do` shim to correctly re-signal errors from the underlying session execution.
+- **Message Capture**: Fixed `flywire--capture-messages` to avoid executing the thunk inside the `*Messages*` buffer context, which could interfere with actions.
+
+** Challenges
+
+- **Property Testing**: We encountered failures in property-based tests for `flywire-do` related to empty strings and invalid actions. These turned out to be partly due to `should-error` macro behavior within the `propcheck` loop and partly due to key type mismatches (symbol vs string). We resolved this by explicitly handling string keys and using `condition-case` in tests.
+
+** Next Steps
+
+Phase 3 will focus on the **Action Registry and Context-Aware Execution**.
+- Implement `flywire-action-registry` to make tool execution pluggable.
+- Port existing tools (`type`, `key`, `command`) to the registry.
+- Add context fields (`buffer`, `window-id`) to steps for precise targeting.
+- Implement new actions like `cancel` and `goto_location`.
