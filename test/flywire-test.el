@@ -129,5 +129,77 @@
           (should (equal (plist-get snap :extra) "data")))
       (remove-hook 'flywire-snapshot-collect-hook hook-fn))))
 
+(ert-deftest flywire-action-registry-defaults ()
+  "Registry should contain default tools."
+  (should (gethash "type_text" flywire-action-registry))
+  (should (gethash "press_key" flywire-action-registry))
+  (should (gethash "run_command" flywire-action-registry))
+  (should (gethash "cancel" flywire-action-registry))
+  (should (gethash "goto_location" flywire-action-registry)))
+
+(ert-deftest flywire-action-cancel-execution ()
+  "Cancel action should abort session execution."
+  (let* ((session (flywire-session-create))
+         ;; Pass "cancel" via fallback dispatch which calls flywire-action-execute-tool directly
+         (steps `(((action . "cancel")))) 
+         (result (flywire-session-exec session steps)))
+    (should (eq (plist-get result :status) :cancelled))))
+
+(ert-deftest flywire-action-goto-location ()
+  "Goto location should move point."
+  (with-temp-buffer
+    (insert "Line 1\nLine 2\nLine 3")
+    (goto-char (point-min))
+    (flywire-action-goto-location '(("line" . 2)))
+    (should (looking-at "Line 2"))
+    
+    (flywire-action-goto-location '(("point" . 1)))
+    (should (eq (point) 1))
+    
+    (flywire-action-goto-location '(("column" . 2)))
+    (should (eq (current-column) 2))))
+
+(ert-deftest flywire-context-execution ()
+  "Step should run in specified buffer."
+  (let ((buf1 (generate-new-buffer "buf1"))
+        (buf2 (generate-new-buffer "buf2")))
+    (with-current-buffer buf1 (insert "buf1"))
+    (with-current-buffer buf2 (insert "buf2"))
+    
+    ;; Register a test tool to verify context.
+    (flywire-register-action "test_context"
+      (lambda (_args)
+        (insert (buffer-name))))
+    
+    (let ((steps `(((action . "test_context") (buffer . ,(buffer-name buf2))))))
+      (flywire-session-exec (flywire-session-create) steps)
+      (with-current-buffer buf2
+        (should (string-search "buf2" (buffer-string))))
+      (with-current-buffer buf1
+        (should-not (string-search "buf2" (buffer-string)))))
+    
+    (kill-buffer buf1)
+    (kill-buffer buf2)))
+
+(ert-deftest flywire-window-id-snapshot-and-context ()
+  "Snapshot should include window ID and context should respect it."
+  (let* ((snap (flywire-snapshot-get-snapshot 'default))
+         (wins (plist-get snap :window-configuration))
+         (first-win (car wins))
+         (win-id (plist-get first-win :id))
+         (win-name (plist-get first-win :name)))
+    (should win-id)
+    (should (string-prefix-p "win-" win-id))
+    
+    ;; Test context
+    (flywire-register-action "test_win_context"
+       (lambda (_args)
+         (insert (format "WIN:%s" (flywire-snapshot--get-window-id (selected-window))))))
+    
+    (let ((steps `(((action . "test_win_context") (window-id . ,win-id)))))
+      (flywire-session-exec (flywire-session-create) steps)
+      (with-current-buffer (get-buffer win-name)
+        (should (string-search (format "WIN:%s" win-id) (buffer-string)))))))
+
 (provide 'test/flywire-test)
 ;;; test/flywire-test.el ends here

@@ -54,21 +54,63 @@
             (append unread-command-events
                     (string-to-list input-string))))))
 
+(defvar flywire-action-registry (make-hash-table :test 'equal)
+  "Registry of available action tools.")
+
+(defun flywire-register-action (name fn &optional plist)
+  "Register tool NAME with function FN and metadata PLIST."
+  (puthash name (list :fn fn :meta plist) flywire-action-registry))
+
+(defun flywire-action-type-text (args)
+  "Implementation of type_text tool."
+  (flywire-action-push-input (alist-get "text" args nil nil #'string=)))
+
+(defun flywire-action-press-key (args)
+  "Implementation of press_key tool."
+  (let ((key (or (alist-get "key" args nil nil #'string=)
+                 (alist-get "chord" args nil nil #'string=))))
+    (flywire-action-simulate-keys key)))
+
+(defun flywire-action-run-command (args)
+  "Implementation of run_command tool."
+  (let* ((command-name (alist-get "name" args nil nil #'string=))
+         (sym (and (stringp command-name) (intern-soft command-name))))
+    (if (and sym (commandp sym))
+        (call-interactively sym)
+      (error "Flywire: invalid command %s" command-name))))
+
+(defun flywire-action-cancel (_args)
+  "Implementation of cancel tool (simulates C-g)."
+  (signal 'quit nil))
+
+(defun flywire-action-goto-location (args)
+  "Implementation of goto_location tool.
+ARGS can contain `point` (int), `line` (int), or `column` (int)."
+  (let ((p (alist-get "point" args nil nil #'string=))
+        (l (alist-get "line" args nil nil #'string=))
+        (c (alist-get "column" args nil nil #'string=)))
+    (when (integerp p)
+      (goto-char p))
+    (when (integerp l)
+      (goto-char (point-min))
+      (forward-line (1- l)))
+    (when (integerp c)
+      (move-to-column c))))
+
+;; Register default tools
+(flywire-register-action "type_text" #'flywire-action-type-text)
+(flywire-register-action "press_key" #'flywire-action-press-key)
+(flywire-register-action "run_command" #'flywire-action-run-command)
+(flywire-register-action "cancel" #'flywire-action-cancel)
+(flywire-register-action "goto_location" #'flywire-action-goto-location)
+
 (defun flywire-action-execute-tool (tool-name args)
-  "Run TOOL-NAME with ARGS in the pre-load style described in the roadmap.
-ARGS should be an alist like ((name . \"find-file\"))."
-  (pcase tool-name
-    ("type_text"
-     (flywire-action-push-input (alist-get 'text args)))
-    ("press_key"
-     (flywire-action-simulate-keys (alist-get 'key args)))
-    ("run_command"
-     (let* ((command-name (alist-get 'name args))
-            (sym (and (stringp command-name) (intern-soft command-name))))
-       (when (and sym (commandp sym))
-         (call-interactively sym))))
-    (_
-     (error "Flywire: unknown tool %s" tool-name))))
+  "Execute TOOL-NAME with ARGS using the registry.
+ARGS is an alist (typically with string keys from JSON)."
+  (let ((entry (gethash tool-name flywire-action-registry)))
+    (if entry
+        (funcall (plist-get entry :fn) args)
+      (error "Flywire: unknown tool %s" tool-name))))
 
 (provide 'flywire-action)
 ;;; flywire-action.el ends here

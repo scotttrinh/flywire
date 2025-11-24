@@ -113,19 +113,39 @@ ARGS can include :id, :env, :snapshot-profile, :safety-policy, :events."
 
 ;;; Execution Logic
 
+(defun flywire--with-step-context (buffer-name window-id thunk)
+  "Execute THUNK in the context of BUFFER-NAME and/or WINDOW-ID if present."
+  (let ((target-window (and window-id (flywire-snapshot-find-window window-id)))
+        (target-buffer (and buffer-name (get-buffer buffer-name))))
+    (cond
+     ((and target-window target-buffer)
+      (with-selected-window target-window
+        (with-current-buffer target-buffer
+          (funcall thunk))))
+     (target-window
+      (with-selected-window target-window
+        (funcall thunk)))
+     (target-buffer
+      (with-current-buffer target-buffer
+        (funcall thunk)))
+     (t (funcall thunk)))))
+
 (defun flywire--execute-step (step)
   "Execute STEP, which comes from a parsed JSON instruction.
 STEP should be an alist with at least an `action` entry."
-  (pcase (alist-get "action" step nil nil #'string=)
-    ("type"
-     (flywire-action-push-input (alist-get "text" step nil nil #'string=)))
-    ("key"
-     (flywire-action-simulate-keys (alist-get "chord" step nil nil #'string=)))
-    ("command"
-     (flywire-action-execute-tool "run_command"
-                                       `((name . ,(alist-get "name" step nil nil #'string=)))))
-    (_
-     (error "Flywire: unknown action %S" step))))
+  (let* ((action-name (alist-get "action" step nil nil #'string=))
+         (buffer-name (alist-get "buffer" step nil nil #'string=))
+         (window-id (alist-get "window-id" step nil nil #'string=))
+         (tool-name (pcase action-name
+                      ("type" "type_text")
+                      ("key" "press_key")
+                      ("command" "run_command")
+                      (other other))))
+    (if tool-name
+        (flywire--with-step-context buffer-name window-id
+                                    (lambda ()
+                                      (flywire-action-execute-tool tool-name step)))
+      (error "Flywire: unknown action %S" step))))
 
 (defun flywire--capture-messages (thunk)
   "Run THUNK and return any new text added to *Messages*."

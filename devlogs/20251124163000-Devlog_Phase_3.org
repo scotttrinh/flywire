@@ -1,0 +1,51 @@
+* Devlog: Phase 3 Implementation - Action Registry and Context-Aware Execution
+
+:AUTHOR: Codex
+:DATE: 2025-11-24
+
+** Overview
+
+We have completed Phase 3, focusing on making the action layer extensible and context-aware. This phase bridges the gap between the JSON-based step description and the internal execution machinery, allowing for more complex agent workflows.
+
+** Key Changes
+
+*** 1. Action Registry (`flywire-action.el`)
+
+- Introduced `flywire-action-registry` to map tool names (strings) to implementation functions.
+- Replaced the hardcoded `pcase` dispatch in `flywire-action-execute-tool` with a registry lookup.
+- Registered core tools: `type_text`, `press_key`, `run_command`.
+- Added new tools:
+  - `cancel`: Simulates a `C-g` quit signal.
+  - `goto_location`: Moves point to a specific `point`, `line`, or `column`.
+
+*** 2. Context-Aware Execution (`flywire.el`)
+
+- Updated `flywire--execute-step` to inspect `buffer` and `window-id` fields in the step definition.
+- Implemented `flywire--with-step-context` helper to ensuring actions run in the correct target window and/or buffer.
+- Mapped legacy JSON action names (`type`, `key`, `command`) to the new registry tool names (`type_text`, `press_key`, `run_command`).
+
+*** 3. Window IDs (`flywire-snapshot.el`)
+
+- Updated the snapshot generation to include a persistent `:id` for each window in the `:window-configuration` list.
+- Implemented `flywire-snapshot--get-window-id` which assigns and retrieves a unique ID (e.g., `win-1`) stored as a window parameter.
+- Implemented `flywire-snapshot-find-window` to resolve these IDs back to window objects during execution.
+
+*** 4. Testing
+
+- Added `test/flywire-test.el` cases covering:
+  - Registry default population.
+  - Execution of new actions (`cancel`, `goto_location`).
+  - Context-specific execution (verifying actions occur in the targeted buffer).
+  - Round-trip verification of window IDs (snapshot -> step -> execution context).
+
+** Challenges & Decisions
+
+- **String vs Symbol Keys**: We standardized on passing the raw JSON-parsed alist (with string keys) to the tool implementations. This avoids unnecessary conversion overhead and keeps the tool implementations closer to the input data. `flywire-action-execute-tool` was updated to pass these arguments through directly.
+- **Context Precedence**: We decided that if both `window-id` and `buffer` are provided, the execution attempts to select the window first, then the buffer. If only `buffer` is provided, it uses `with-current-buffer` (which may not affect `type` actions targeting the selected window). This places the responsibility on the agent to provide `window-id` for window-dependent actions like typing.
+
+** Next Steps
+
+Phase 4 will focus on **Safety Hooks and Documentation**.
+- Implement `flywire-allow-command-p` to restrict which commands can be run.
+- Document the new Session/Environment model and the Action Registry.
+- Finalize the API surface and review convenience shims.

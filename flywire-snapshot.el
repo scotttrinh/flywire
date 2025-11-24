@@ -134,11 +134,31 @@ Defaults to 10."
               :prompt (buffer-substring-no-properties (point-min) (minibuffer-prompt-end))
               :contents (or (minibuffer-contents) ""))))))
 
+(defvar flywire-snapshot--window-id-counter 0
+  "Counter for generating unique window IDs.")
+
+(defun flywire-snapshot--get-window-id (window)
+  "Return a unique ID for WINDOW, assigning one if necessary."
+  (or (window-parameter window 'flywire-id)
+      (let ((id (format "win-%d" (cl-incf flywire-snapshot--window-id-counter))))
+        (set-window-parameter window 'flywire-id id)
+        id)))
+
+(defun flywire-snapshot-find-window (id)
+  "Find a window by its flywire ID."
+  (let ((found nil))
+    (walk-windows (lambda (w)
+                    (when (equal (window-parameter w 'flywire-id) id)
+                      (setq found w)))
+                  t t) ; all frames, all windows
+    found))
+
 (defun flywire-snapshot--window-list-info ()
   "Describe the visible window configuration as a list of buffers."
   (mapcar (lambda (win)
             (with-selected-window win
-              (list :name (buffer-name)
+              (list :id (flywire-snapshot--get-window-id win)
+                    :name (buffer-name)
                     :file (buffer-file-name))))
           (window-list nil 0)))
 
