@@ -394,9 +394,23 @@ To keep tests maintainable and decoupled from UI specifics, we will:
 - Introduce one or more *test environments* implemented only in the test suite, e.g.:
   - `flywire-test-env-headless` — runs code in a dedicated buffer, no real frames assumed.
   - `flywire-test-env-current` — wraps `flywire-env-default` but exposes hooks for assertions.
-- Provide utility functions/macros for async tests:
-  - Helpers to subscribe to session events and wait (with timeout) for specific `:type` values.
-  - A small DSL or helper to "execute steps and collect all events" for assertions.
+
+- Provide shared test helpers/macros (either in an existing `test/*.el` or a new `test/flywire-test-helpers.el`):
+  - `(flywire-test-with-session env &rest body)` — macro that:
+    - Creates a `flywire-session` with the given environment (or env builder function).
+    - Binds a local `session` variable for use in `body`.
+    - Ensures any environment `teardown` is called at the end of the test.
+  - `(flywire-test-with-headless-session &rest body)` — convenience macro using `flywire-test-env-headless` and binding `session`.
+  - `(flywire-test-collect-events session thunk)` — helper that:
+    - Temporarily registers an event handler on `session`.
+    - Runs `thunk`.
+    - Returns the list of events emitted during `thunk`.
+  - `(flywire-test-wait-for-event session predicate &optional timeout)` — helper that:
+    - Subscribes to events on `session`.
+    - Blocks (using `accept-process-output` / `sleep-for`) until `predicate` returns non-nil for an event or `timeout` elapses.
+    - Returns the matching event (or `nil` on timeout).
+
+These helpers let `ert` tests stay small and declarative while still exercising async and environment behavior in a realistic way.
 
 Phase-specific sections below call out which tests to add or update in each phase, but this section defines the overall approach.
 

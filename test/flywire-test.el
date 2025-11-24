@@ -68,5 +68,24 @@
     (let ((expected (append '(?f ?o ?o) (listify-key-sequence (kbd "RET")))))
       (should (equal unread-command-events expected)))))
 
+(ert-deftest flywire-session-creation ()
+  "Should create session with default environment."
+  (let ((session (flywire-session-create)))
+    (should (flywire-session-p session))
+    (should (flywire-env-p (flywire-session-env session)))
+    (should (equal (flywire-env-name (flywire-session-env session)) "default"))))
+
+(ert-deftest flywire-session-exec-sync ()
+  "Should execute steps synchronously and return structured result."
+  (let* ((session (flywire-session-create))
+         (steps `(((action . "type") (text . "hello"))))
+         (result (flywire-session-exec session steps)))
+    (should (eq (plist-get result :status) :ok))
+    (should (listp (plist-get result :steps)))
+    (should (= (length (plist-get result :steps)) 1))
+    (let ((step-res (car (plist-get result :steps))))
+      (should (eq (alist-get :status step-res) :ok))
+      (should (equal (alist-get 'action (alist-get :action step-res)) "type")))))
+
 (provide 'test/flywire-test)
 ;;; test/flywire-test.el ends here

@@ -42,4 +42,13 @@ Returns the stdout as a string."
     ;; Verify content field exists (even if empty/default)
     (should (plist-get json-res :content))))
 
+(ert-deftest flywire-e2e-session-api ()
+  "Launch a subprocess and use session API explicitly."
+  (let* ((eval-form "(let* ((s (flywire-session-create))
+                            (res (flywire-session-exec s '(((action . \"type\") (text . \"session\"))))))
+                       (princ (json-encode res)))")
+         (output (flywire-e2e-run eval-form))
+         (json-res (json-parse-string output :object-type 'plist)))
+    (should (string= (plist-get json-res :status) "ok"))))
+
 (provide 'test/flywire-e2e-test)

@@ -41,4 +41,22 @@
     (should found))
   (flywire-async-mode -1))
 
+(ert-deftest-async flywire-session-async-events (done)
+  "Should emit events during async execution."
+  (let* ((session (flywire-session-create :id 'async-test))
+         (steps `(((action . "type") (text . "foo"))))
+         (events nil))
+    (flywire-session-on-event session (lambda (e) (push e events)))
+    (flywire-session-start-async session steps)
+    
+    (run-with-timer 0.2 nil
+                    (lambda ()
+                      (should (>= (length events) 4)) ;; exec-start, step-start, step-end, exec-complete
+                      (let ((types (mapcar (lambda (e) (plist-get e :type)) events)))
+                        (should (member :exec-start types))
+                        (should (member :step-start types))
+                        (should (member :step-end types))
+                        (should (member :exec-complete types)))
+                      (funcall done)))))
+
 (provide 'test/flywire-async-test)
