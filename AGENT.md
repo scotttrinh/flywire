@@ -14,7 +14,8 @@ Working notes for future agents contributing to flywire. This doc explains our p
   - Create the file however you like (Org capture, `touch`, Emacs, etc.), then rename it based on the filesystem creation time so the prefix is always correct.
   - Command: `ts=$(stat -f '%SB' -t '%Y%m%d%H%M%S' devlogs/tmp.org) && mv devlogs/tmp.org "devlogs/${ts}-Plan_Phase_2.org"`.
   - This uses macOS `stat` to read the real creation time (`%SB`) and ensures distinct prefixes even when multiple files are created the same minute.
-- If you find yourself stuck with syntax issues, primarily issues with balancing parentheses, please summarize what you're trying to do, stop the agentic loop, and ask for help from the user.
+- **Phase Completion**: Once you finish a phase, **write a devlog before making a commit**. The commit should contain the devlog describing what was done, challenges/changes, and next steps.
+- **Parentheses/Syntax**: If you get stuck trying to balance parens in edited files or fixing syntax errors, you can stop and ask the user to intervene.
 
 ## Elisp Conventions (Project-Specific)
 
@@ -40,8 +41,9 @@ Working notes for future agents contributing to flywire. This doc explains our p
 
 ## Testing & Quality Gates
 
-- Byte-compile clean on local Emacs
-- ERT tests: start small, and cover defensively
+- **Mandatory Runner**: You **MUST** run tests via `nix run .#test` which sets up the test dependencies.
+- **Run Often**: Check tests and lints often and try to ensure they both run cleanly.
+- **Runner Integrity**: Tests can fail while changes are in progress, but the **test runner itself should not be in a broken state** (e.g., ensure syntax is valid so tests *can* run).
 - Linting: run `nix run .#lint` to check for style, packaging, and byte-compilation issues.
 - Keep UI non-blocking
 
