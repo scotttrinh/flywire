@@ -1,0 +1,49 @@
+* Devlog: Phase 4 Implementation - Safety Hooks and Documentation
+
+:AUTHOR: Codex
+:DATE: 2025-11-24
+
+** Overview
+
+We have completed Phase 4, introducing safety policy hooks, refining the documentation, and refactoring the codebase to better support the Session/Environment architecture while satisfying linting and dependency requirements.
+
+** Key Changes
+
+*** 1. Safety Policy Hooks (`flywire-action.el`)
+
+- Implemented `flywire-action-allow-command-p` (customizable predicate).
+- Updated `flywire-action-run-command` to check this predicate before executing any interactive command.
+- Renamed `flywire-register-action` to `flywire-action-register` to align with package prefixes.
+- Added tests to verify that commands can be allowed or denied by policy.
+
+*** 2. Codebase Refactoring (`flywire-session.el`)
+
+- Extracted `flywire-session` and `flywire-session-env` structures and logic from `flywire.el` into a new file `flywire-session.el`.
+- This resolves circular dependencies between `flywire.el`, `flywire-async.el`, and the session logic.
+- Renamed internal functions to strictly follow the `flywire-session-` prefix (e.g., `flywire-session--execute-step`).
+- Updated `flywire.el` to act as the main entry point that re-exports these features.
+
+*** 3. Async Event Bridging (`flywire-async.el`)
+
+- Updated `flywire-async-mode` to listen to events from the current session (`flywire-session-current`) and forward them to the global `flywire-async-output-handler`.
+- This ensures that legacy async workflows (using `flywire-do-async`) continue to work while leveraging the new session event model.
+
+*** 4. Documentation
+
+- Rewrote `README.org` to explain the new Core Concepts: Sessions, Environments, Actions, and Snapshots.
+- Added usage examples for Sync and Async execution.
+- Updated `AGENT.md` with a new section "Building Agent Environments" to guide future agent developers.
+
+** Challenges & Decisions
+
+- **Linting Strictness**: We encountered significant linting errors (checkdoc, package-lint, byte-compile) due to circular dependencies and prefix mismatches. The extraction of `flywire-session.el` and rigorous renaming of symbols were necessary to produce a clean, professional package.
+- **Test Updates**: Tests required updates to match the new symbol names (`flywire-session-env-p` vs `flywire-env-p`) and to properly test the safety hooks using dynamic binding.
+
+** Next Steps
+
+The core architecture for the "Agent Interaction" plan is now complete. The library provides a robust foundation for building external agents that can drive Emacs safely and reliably.
+
+Future work (post-RFC) might include:
+- More sophisticated environments (e.g., remote/TRAMP support).
+- richer snapshot collectors (e.g., font-lock support).
+- Integration with specific agent frameworks.

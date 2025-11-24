@@ -2,11 +2,7 @@
 
 ~flywire~ is an Emacs package that serves as the "arms and eyes" for automated agents (such as LLMs) operating within Emacs. It enables external processes to observe the editor's state and execute interactive commands programmatically in the current user session.
 
-It provides two core capabilities:
-1. **Observation**: Generates JSON-serializable snapshots of the current frame, including buffer content, cursor position, window configuration, and minibuffer state.
-2. **Execution**: precise simulation of user input (keystrokes, text entry) and interactive command execution.
-
-This package is designed to separate the low-level "driving" mechanics from the high-level "agent" logic, ensuring robust and predictable control.
+It separates the mechanics of "driving" Emacs from the agent's decision logic, offering a robust, session-based API that handles sync/async execution, environments (interactive vs headless), and structured observation.
 
 * Installation
 
@@ -31,110 +27,116 @@ Load it in your ~$DOOMDIR/config.el~:
 
 ** Straight.el
 
-Add the following to your configuration:
-
 #+begin_src elisp
 (straight-use-package
  '(flywire :type git :host github :repo "scotttrinh/flywire"))
 #+end_src
 
-** Manual / package.el
+* Core Concepts
 
-Clone the repository:
+Flywire is built around four key concepts:
 
-#+begin_src sh
-git clone https://github.com/scotttrinh/flywire.git ~/.emacs.d/site-lisp/flywire
-#+end_src
-
-Add it to your ~load-path~ and require it:
-
-#+begin_src elisp
-(add-to-list 'load-path "~/.emacs.d/site-lisp/flywire")
-(require 'flywire)
-#+end_src
+- **Sessions**: A `flywire-session` represents a single driver instance. It holds configuration and state for an agent's interaction loop.
+- **Environments**: A `flywire-env` defines *where* the session runs (e.g., the current frame, a dedicated agent frame, or a headless buffer).
+- **Actions**: Native Emacs commands and special tools (like `type_text` or `goto_location`) that the agent can invoke.
+- **Snapshots**: Structured views of the editor state (buffer content, cursor, windows), configurable via profiles.
 
 * Usage
 
-The core entry point is ~flywire-do~, which accepts a native Elisp list describing a sequence of actions.
+** Basic Execution (Sync)
+
+For simple scripts or REPL usage, you can use `flywire-do` (legacy wrapper) or the session API directly.
 
 #+begin_src elisp
-;; Using Elisp structure
-(flywire-do
- '(((action . "type") (text . "Hello World"))
-   ((action . "key") (chord . "RET"))))
+(require 'flywire)
 
-;; If you have a JSON string (e.g. from an external process), parse it first:
-(let ((json-string "[{\"action\": \"type\", \"text\": \"Hello\"}]"))
-  (flywire-do
-   (json-parse-string json-string :object-type 'alist :array-type 'list)))
+;; Create a session using the default environment (current frame)
+(let ((session (flywire-session-create)))
+  (flywire-session-exec session
+    '(((action . "type_text") (text . "Hello World"))
+      ((action . "press_key") (key . "RET")))))
+#+end_src
+
+** Async Execution & Events
+
+For interactive agents that need to react to minibuffer prompts or idle state, use `flywire-session-start-async`.
+
+#+begin_src elisp
+(defun my-event-handler (event)
+  (pcase (plist-get event :type)
+    (:step-end (message "Finished step: %s" (plist-get event :result)))
+    (:minibuffer-open (message "Minibuffer opened! Snapshot: %s" (plist-get event :snapshot)))))
+
+(let ((session (flywire-session-create)))
+  (flywire-session-on-event session #'my-event-handler)
+  (flywire-session-start-async session
+    '(((action . "run_command") (name . "find-file"))
+      ((action . "type_text") (text . "/tmp/test.txt"))
+      ((action . "press_key") (key . "RET")))))
 #+end_src
 
 * Configuration
 
-Flywire is designed to be configurable to manage the trade-off between context availability and resource usage (e.g., token counts for LLM agents).
+** Snapshot Profiles
 
-** Snapshot Content
-
-You can control how much information is gathered in each snapshot using ~flywire-snapshot-collectors~.
+Snapshots can be expensive. Use profiles to control data volume.
 
 #+begin_src elisp
-;; Only collect buffer info and cursor position (minimal token usage)
-(setq flywire-snapshot-collectors '(buffer-info cursor))
+;; Use the 'minimal' profile for low-latency checks
+(flywire-snapshot-get-snapshot 'minimal)
 
-;; Default: collect everything
-(setq flywire-snapshot-collectors
-      '(buffer-info content cursor minibuffer window-configuration))
+;; Use 'rich' for full context (includes visible content, messages, etc.)
+(flywire-snapshot-get-snapshot 'rich)
 #+end_src
 
-** Context Window
+Define your own profiles in `flywire-snapshot-profiles`.
 
-When capturing buffer content, you can limit the size of the text window to avoid overwhelming the agent.
+** Snapshot Extensions
+
+Add custom data to snapshots using `flywire-snapshot-collect-hook`.
 
 #+begin_src elisp
-;; Number of lines to capture above and below the cursor (default: 50)
-(setq flywire-snapshot-context-lines 20)
-
-;; Maximum characters per line to capture before truncating (default: 1000)
-;; This is useful for preventing "minified file" issues.
-(setq flywire-snapshot-max-line-length 500)
+(add-hook 'flywire-snapshot-collect-hook
+          (lambda (snap)
+            (plist-put snap :my-custom-field "some data")))
 #+end_src
 
-** Async Handling
+** Safety Policy
 
-If you are using ~flywire-do-async~ or the ~flywire-async-mode~, you can customize how state updates are emitted.
+Restrict which commands an agent can run using `flywire-allow-command-p`.
 
 #+begin_src elisp
-;; Define a custom handler for snapshot updates
-(defun my-agent-handler (snapshot)
-  (let ((json-string (json-encode snapshot)))
-    (process-send-string my-agent-process json-string)))
+(setq flywire-allow-command-p
+      (lambda (cmd)
+        (memq cmd '(next-line previous-line self-insert-command))))
+#+end_src
 
-(setq flywire-async-output-handler #'my-agent-handler)
+* Action Registry
+
+Flywire maps string-based tool names to Emacs functions. Standard tools include:
+
+- `type_text`: Insert text.
+- `press_key`: Simulate key chords (`RET`, `C-c C-c`).
+- `run_command`: Execute interactive commands.
+- `cancel`: Simulate `C-g`.
+- `goto_location`: Jump to point/line/column.
+
+Register custom actions:
+
+#+begin_src elisp
+(flywire-register-action "my_tool"
+  (lambda (args)
+    (message "Tool called with: %s" args)))
 #+end_src
 
 * Development
 
 ** Testing
 
-This project uses [[https://nixos.org/][Nix]] to manage development dependencies and test environments.
-
-To run the full test suite:
+Run the full test suite with Nix:
 
 #+begin_src sh
 nix run .#test
 #+end_src
 
-To run tests manually in a development shell:
-
-#+begin_src sh
-nix develop
-emacs -q --batch -l test/run-tests.el
-#+end_src
-
-** Workflow
-
-Development follows a "Plan vs Notes" workflow recorded in the ~devlogs/~ directory.
-- **Plans**: Detailed specifications of intended changes (e.g., ~YYYYMMDDHHMM-Plan_Phase_N.org~).
-- **Notes**: Retrospective logs of what was actually implemented, issues encountered, and decisions made (e.g., ~YYYYMMDDHHMM-Notes_*.org~).
-
-Please refer to [[file:AGENT.md][AGENT.md]] for detailed contribution guidelines and coding conventions.
+See [[file:AGENT.md][AGENT.md]] for contribution guidelines.

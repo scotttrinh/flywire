@@ -85,3 +85,48 @@ Working notes for future agents contributing to flywire. This doc explains our p
 - Reserved key sequences: don’t bind `C-c <letter>`.
 - Load-path issues: confirm the working copy is in `load-path` during WIP.
 - Over-eager `require`: avoid heavy `require` at top-level if it creates cycles; autoload where possible.
+
+## Building Agent Environments
+
+When integrating Flywire into an agent loop, prefer the **Session** API over global functions.
+
+### 1. Creating a Dedicated Environment
+
+Avoid running agent actions in the user's global context if possible. Instead, define an environment that targets a specific frame or buffer.
+
+```elisp
+(defun my-agent-env-create ()
+  (let ((frame (make-frame '((name . "Agent Frame")))))
+    (flywire-env-create
+     :name "my-agent"
+     :run (lambda (thunk)
+            (with-selected-frame frame
+              (funcall thunk)))
+     :snapshot (lambda (profile)
+                 (with-selected-frame frame
+                   (flywire-snapshot-get-snapshot profile)))
+     :teardown (lambda (_session)
+                 (delete-frame frame)))))
+```
+
+### 2. Handling Interactive Events
+
+Agents often need to pause for user input (minibuffer) or wait for operations to complete. Use `flywire-session-on-event` to react to these states.
+
+- **`:minibuffer-open`**: The agent should stop executing steps and optionally decide to fill the prompt.
+- **`:idle`**: Useful for triggering "thinking" loops when Emacs is quiet.
+
+### 3. Headless Testing
+
+For CI/CD, use a headless environment that simulates windowing without a GUI.
+
+```elisp
+(defun my-headless-env ()
+  (flywire-env-create
+   :name "headless"
+   :run (lambda (thunk)
+          (with-temp-buffer
+            (funcall thunk)))))
+```
+
+Use `nix run .#test` to verify your agent logic in batch mode.

@@ -33,6 +33,7 @@
 ;;; Code:
 
 (require 'flywire-snapshot)
+(require 'flywire-session)
 (require 'json)
 
 (defcustom flywire-async-output-handler #'flywire-async-default-output-handler
@@ -57,6 +58,18 @@ The function receives a single argument: the snapshot plist."
   "Called when Emacs is idle."
   (funcall flywire-async-output-handler (flywire-snapshot-get-snapshot)))
 
+(defun flywire-async--session-adapter (event)
+  "Forward session EVENT to the output handler."
+  (let ((type (plist-get event :type)))
+    ;; Forward interesting events
+    (when (memq type '(:step-end :exec-complete :minibuffer-open :idle))
+      (let ((snap (or (plist-get event :snapshot)
+                      ;; For events that imply state change but might not have a snapshot attached yet
+                      (and (memq type '(:minibuffer-open :idle))
+                           (flywire-snapshot-get-snapshot)))))
+        (when snap
+          (funcall flywire-async-output-handler snap))))))
+
 (defun flywire-async--enable-monitoring ()
   "Setup hooks and timers."
   (add-hook 'minibuffer-setup-hook #'flywire-async--on-minibuffer-setup)
@@ -64,14 +77,20 @@ The function receives a single argument: the snapshot plist."
   (when flywire-async--idle-timer (cancel-timer flywire-async--idle-timer))
   ;; Set new idle timer (e.g., 0.5s)
   (setq flywire-async--idle-timer
-        (run-with-idle-timer 0.5 t #'flywire-async--on-idle)))
+        (run-with-idle-timer 0.5 t #'flywire-async--on-idle))
+  ;; Attach to current session
+  (when (fboundp 'flywire-session-current)
+    (flywire-session-on-event (flywire-session-current) #'flywire-async--session-adapter)))
 
 (defun flywire-async--disable-monitoring ()
   "Teardown hooks and timers."
   (remove-hook 'minibuffer-setup-hook #'flywire-async--on-minibuffer-setup)
   (when flywire-async--idle-timer
     (cancel-timer flywire-async--idle-timer)
-    (setq flywire-async--idle-timer nil)))
+    (setq flywire-async--idle-timer nil))
+  ;; Note: We don't easily unregister the session handler here without more bookkeeping,
+  ;; but for the default session it's acceptable to leave it or we'd need to store the lambda.
+  )
 
 ;;;###autoload
 (define-minor-mode flywire-async-mode

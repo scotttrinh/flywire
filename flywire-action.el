@@ -54,33 +54,51 @@
             (append unread-command-events
                     (string-to-list input-string))))))
 
+(defun flywire-action--allow-all (_command)
+  "Default safety policy: allow all commands.
+_COMMAND is the command symbol being checked."
+  t)
+
+(defcustom flywire-action-allow-command-p #'flywire-action--allow-all
+  "Predicate to decide whether a command may be run.
+Called with one argument, the command symbol."
+  :group 'flywire
+  :type 'function)
+
 (defvar flywire-action-registry (make-hash-table :test 'equal)
   "Registry of available action tools.")
 
-(defun flywire-register-action (name fn &optional plist)
+(defun flywire-action-register (name fn &optional plist)
   "Register tool NAME with function FN and metadata PLIST."
   (puthash name (list :fn fn :meta plist) flywire-action-registry))
 
 (defun flywire-action-type-text (args)
-  "Implementation of type_text tool."
+  "Implementation of type_text tool.
+ARGS is an alist containing the text to type."
   (flywire-action-push-input (alist-get "text" args nil nil #'string=)))
 
 (defun flywire-action-press-key (args)
-  "Implementation of press_key tool."
+  "Implementation of press_key tool.
+ARGS is an alist containing the key or chord to press."
   (let ((key (or (alist-get "key" args nil nil #'string=)
                  (alist-get "chord" args nil nil #'string=))))
     (flywire-action-simulate-keys key)))
 
 (defun flywire-action-run-command (args)
-  "Implementation of run_command tool."
+  "Implementation of run_command tool.
+ARGS is an alist containing the command name."
   (let* ((command-name (alist-get "name" args nil nil #'string=))
          (sym (and (stringp command-name) (intern-soft command-name))))
-    (if (and sym (commandp sym))
-        (call-interactively sym)
-      (error "Flywire: invalid command %s" command-name))))
+    (cond
+     ((not (and sym (commandp sym)))
+      (error "Flywire: invalid command %s" command-name))
+     ((not (funcall flywire-action-allow-command-p sym))
+      (error "Flywire: command denied by policy: %s" command-name))
+     (t
+      (call-interactively sym)))))
 
 (defun flywire-action-cancel (_args)
-  "Implementation of cancel tool (simulates C-g)."
+  "Implementation of cancel tool (simulates `keyboard-quit')."
   (signal 'quit nil))
 
 (defun flywire-action-goto-location (args)
@@ -98,11 +116,11 @@ ARGS can contain `point` (int), `line` (int), or `column` (int)."
       (move-to-column c))))
 
 ;; Register default tools
-(flywire-register-action "type_text" #'flywire-action-type-text)
-(flywire-register-action "press_key" #'flywire-action-press-key)
-(flywire-register-action "run_command" #'flywire-action-run-command)
-(flywire-register-action "cancel" #'flywire-action-cancel)
-(flywire-register-action "goto_location" #'flywire-action-goto-location)
+(flywire-action-register "type_text" #'flywire-action-type-text)
+(flywire-action-register "press_key" #'flywire-action-press-key)
+(flywire-action-register "run_command" #'flywire-action-run-command)
+(flywire-action-register "cancel" #'flywire-action-cancel)
+(flywire-action-register "goto_location" #'flywire-action-goto-location)
 
 (defun flywire-action-execute-tool (tool-name args)
   "Execute TOOL-NAME with ARGS using the registry.

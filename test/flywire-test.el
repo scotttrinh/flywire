@@ -20,7 +20,12 @@
 (ert-deftest flywire-snapshot-content-windowing ()
   "Snapshot should window content around cursor."
   (with-temp-buffer
-    (insert "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n")
+    (insert "Line 1
+Line 2
+Line 3
+Line 4
+Line 5
+")
     (goto-char (point-min))
     (forward-line 2) ; On Line 3
     (let* ((snapshot (flywire-snapshot-get-snapshot))
@@ -35,7 +40,8 @@
   (with-temp-buffer
     ;; Insert 200 lines
     (dotimes (i 200)
-      (insert (format "Line %d\n" i)))
+      (insert (format "Line %d
+" i)))
     (goto-char (point-min))
     (forward-line 100) ; Middle of buffer
     (let* ((snapshot (flywire-snapshot-get-snapshot))
@@ -72,8 +78,8 @@
   "Should create session with default environment."
   (let ((session (flywire-session-create)))
     (should (flywire-session-p session))
-    (should (flywire-env-p (flywire-session-env session)))
-    (should (equal (flywire-env-name (flywire-session-env session)) "default"))))
+    (should (flywire-session-env-p (flywire-session-env session)))
+    (should (equal (flywire-session-env-name (flywire-session-env session)) "default"))))
 
 (ert-deftest flywire-session-exec-sync ()
   "Should execute steps synchronously and return structured result."
@@ -113,7 +119,8 @@
 (ert-deftest flywire-snapshot-visible-content ()
   "Snapshot should capture visible content."
   (with-temp-buffer
-    (insert "Visible\n")
+    (insert "Visible
+")
     ;; In batch mode, window manipulation might be limited, but we try.
     (set-window-buffer (selected-window) (current-buffer))
     (let* ((snap (flywire-snapshot-get-snapshot nil '(visible-content)))
@@ -141,14 +148,16 @@
   "Cancel action should abort session execution."
   (let* ((session (flywire-session-create))
          ;; Pass "cancel" via fallback dispatch which calls flywire-action-execute-tool directly
-         (steps `(((action . "cancel")))) 
+         (steps `(((action . "cancel"))))
          (result (flywire-session-exec session steps)))
     (should (eq (plist-get result :status) :cancelled))))
 
 (ert-deftest flywire-action-goto-location ()
   "Goto location should move point."
   (with-temp-buffer
-    (insert "Line 1\nLine 2\nLine 3")
+    (insert "Line 1
+Line 2
+Line 3")
     (goto-char (point-min))
     (flywire-action-goto-location '(("line" . 2)))
     (should (looking-at "Line 2"))
@@ -167,7 +176,7 @@
     (with-current-buffer buf2 (insert "buf2"))
     
     ;; Register a test tool to verify context.
-    (flywire-register-action "test_context"
+    (flywire-action-register "test_context"
       (lambda (_args)
         (insert (buffer-name))))
     
@@ -192,7 +201,7 @@
     (should (string-prefix-p "win-" win-id))
     
     ;; Test context
-    (flywire-register-action "test_win_context"
+    (flywire-action-register "test_win_context"
        (lambda (_args)
          (insert (format "WIN:%s" (flywire-snapshot--get-window-id (selected-window))))))
     
@@ -200,6 +209,25 @@
       (flywire-session-exec (flywire-session-create) steps)
       (with-current-buffer (get-buffer win-name)
         (should (string-search (format "WIN:%s" win-id) (buffer-string)))))))
+
+(ert-deftest flywire-action-safety-policy ()
+  "Safety policy should allow or deny commands."
+  ;; Deny all commands policy
+  (let ((flywire-action-allow-command-p (lambda (_cmd) nil)))
+    (condition-case err
+        (flywire-action-run-command '(("name" . "ignore")))
+      (error
+       (should (string-search "command denied" (error-message-string err))))))
+  
+  ;; Allow specific command policy
+  (let ((flywire-action-allow-command-p (lambda (cmd) (eq cmd 'ignore))))
+    ;; Allowed
+    (should (progn (flywire-action-run-command '(("name" . "ignore"))) t))
+    ;; Denied
+    (condition-case err
+        (flywire-action-run-command '(("name" . "next-line")))
+      (error
+       (should (string-search "command denied" (error-message-string err)))))))
 
 (provide 'test/flywire-test)
 ;;; test/flywire-test.el ends here
