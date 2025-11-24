@@ -1,0 +1,541 @@
+* Plan: Flywire Sessions and Environments for Agentic Use
+
+:AUTHOR: Codex
+:DATE: 2025-11-24
+
+This plan treats flywire as a *general-purpose Emacs driver* for automated agents, structured around two core ideas:
+
+- A *session* abstraction that encapsulates how an agent interacts with Emacs.
+- A pluggable *environment* abstraction that decides *where and how* that interaction is rendered (which frame, which windows, or even headless/batch).
+
+Frames, window layouts, and other UX choices are *not* hard-coded into flywire. Instead, higher-level packages (agent frontends, test runners, CI harnesses) provide environments that tell flywire what "the current world" looks like for a given session.
+
+The plan is structured as an RFC plus a phased implementation path.
+
+** Context and Problem Statement
+
+Flywire already provides:
+
+- A simple step executor (`flywire-do` / `flywire-do-async`) that can type text, press keys, and invoke interactive commands.
+- A snapshotter (`flywire-snapshot-get-snapshot`) that captures buffer, cursor, minibuffer, and window configuration.
+- An async monitor (`flywire-async-mode`) that emits snapshots on minibuffer activation and idle.
+
+This is enough to build a basic agent loop externally, but there are pain points if we push toward a "Playwright for Emacs" that supports both:
+
+- Long-running, partially interactive agent workflows (e.g., filling in prompts, reacting to minibuffer state), *and*
+- Headless or batch workflows (e.g., refactorings, tests) that should not disturb the user.
+
+Key problems today:
+
+- No structured notion of a *session*; everything is global.
+- No abstraction for *environment*; flywire implicitly assumes "current Emacs frame/layout".
+- Async monitoring is global and coarse; we want session-scoped event streams that can work both interactively and headlessly.
+- Snapshot and execution results are unstructured; external tools have to guess at error conditions and messages.
+- Safety and policy hooks are only loosely modeled.
+
+Because flywire is unpublished, we will prioritize the best session-centric design over preserving existing entry points.
+
+** Goals
+
+1. *Session-first API*
+   - Make sessions the primary entry point for agentic use.
+   - A session represents one "driver context" for an agent or tool, with its own options, environment, and event handlers.
+
+2. *Environment inversion of control*
+   - Flywire does not decide whether an agent uses the current frame, a dedicated frame, or a headless/batch Emacs.
+   - Instead, the caller provides an environment object that tells flywire how to run code and take snapshots in the desired context.
+
+3. *Structured sync and async execution*
+   - Every execution (sync or async) returns or emits structured results: status, error, messages, and optionally snapshots.
+   - Async workflows must be first-class: it should be natural to run interactive flows that depend on minibuffer state, idle, and other events.
+
+4. *Configurable, extensible snapshots*
+   - Provide profile-based snapshots (minimal/default/rich) and hooks for external packages to extend snapshot data.
+
+5. *Session-scoped events*
+   - Replace the global async story with a session/event model that can:
+     - Emit snapshots and state change events for interactive agent sessions.
+     - Be disabled or customized for headless/test environments.
+
+6. *Safety and policy hooks*
+   - Provide simple, well-defined hook points for allowing/denying commands and side-effecting actions.
+
+7. *Pragmatic API evolution*
+   - Existing entry points (`flywire-do`, `flywire-do-async`, `flywire-snapshot-get-snapshot`, `flywire-async-mode`) can be adapted or replaced to fit the new model; they are not treated as long-term stable APIs.
+
+** Architecture Overview
+
+We structure flywire into four conceptual layers. Some of this structure exists already but needs to be made explicit and extended.
+
+1. *Session + environment + execution engine* (new abstractions)
+   - Location: `flywire.el` (and possibly a new `flywire-session.el` if needed).
+
+2. *Action layer* (existing, refined)
+   - Location: `flywire-action.el`.
+
+3. *Snapshot layer* (existing, extended)
+   - Location: `flywire-snapshot.el`.
+
+4. *Async/event layer* (existing, extended and session-scoped)
+   - Location: `flywire-async.el`.
+
+Higher-level packages (agent frontends, test harnesses) compose these layers by creating sessions with appropriate environments.
+
+** Core Concepts
+
+*** Sessions
+
+A *session* represents a single flywire driver instance.
+
+- It has an identity (for logging and routing events).
+- It holds options (snapshot profile, safety policy, event configuration).
+- It carries an *environment* object that controls where and how the session runs.
+- It exposes sync and async execution APIs and an event stream.
+
+Session struct sketch:
+
+#+begin_src elisp
+(cl-defstruct (flywire-session
+               (:constructor flywire-session--create))
+  id
+  env          ; flywire-env instance (see below)
+  options      ; plist of configuration options
+  state        ; internal state (messages, throttling, etc.)
+  handlers)    ; event handlers / callbacks
+#+end_src
+
+*** Environments
+
+An *environment* is a small object that tells flywire how to interpret "current Emacs state" for a session. Frames, window layouts, and batch/headless behavior are all encoded in the environment.
+
+Environment struct sketch:
+
+#+begin_src elisp
+(cl-defstruct flywire-env
+  name
+  run           ; (lambda (thunk)) -> execute within this env
+  snapshot      ; (lambda (&optional profile)) -> snapshot plist
+  enable-events ; (lambda (session opts)) -> install hooks/timers, optional
+  teardown)     ; (lambda (session)) -> optional cleanup
+#+end_src
+
+Examples (implemented outside core flywire):
+
+- *Current-frame environment* (default):
+  - `run`: just calls THUNK; whatever frame/buffer the user selected is the context.
+  - `snapshot`: calls `flywire-snapshot-get-snapshot` in the current context.
+
+- *Dedicated agent frame environment* (agent package):
+  - `run`: uses `with-selected-frame` on a dedicated frame, avoids `select-frame-set-input-focus`.
+  - `snapshot`: collects state for that frame.
+  - `enable-events`: installs minibuffer/idle hooks scoped to that frame.
+
+- *Headless test environment* (test runner package):
+  - `run`: uses a dedicated buffer, no frame assumptions.
+  - `snapshot`: uses a `minimal` profile and skips window configuration.
+  - `enable-events`: may be a no-op or use simple timers.
+
+Flywire core *does not* create frames or decide when to show/hide them. It just trusts the environment.
+
+*** Events
+
+Events provide a session-scoped async view of what is happening. They are central to supporting interactive workflows where the agent needs to react to minibuffer prompts, idle states, and other editor activity.
+
+Event shape (plist):
+
+- `:type` — symbol such as `:snapshot`, `:step-start`, `:step-end`, `:minibuffer-open`, `:minibuffer-close`, `:idle`, `:session-end`.
+- `:session` — session id or object.
+- `:timestamp` — optional timestamp.
+- `:snapshot` — optional snapshot plist (for `:snapshot` events or `:step-end`).
+- `:result` — optional execution result plist for step-related events.
+- Additional fields as needed (e.g., `:step-index`, `:prompt`).
+
+Sessions can register event handlers; environments can also wire events to external sinks (e.g., a chat buffer).
+
+** Detailed Design
+
+*** 1. Session and Environment APIs
+
+We introduce a small public API around sessions and environments.
+
+- `(flywire-env-default)`
+  - Returns a default environment representing the current Emacs session (no special frame handling).
+
+- `(flywire-session-create &rest args)`
+  - Returns a new session object.
+  - Key arguments (plist):
+    - `:id` — optional session identifier (symbol/string).
+    - `:env` — a `flywire-env` instance; defaults to `(flywire-env-default)`.
+    - `:snapshot-profile` — symbol (`minimal`, `default`, `rich`, etc.).
+    - `:safety-policy` — function or keyword for command/tool approval.
+    - `:events` — plist describing which events to emit.
+
+- `(flywire-session-current)`
+  - Returns a global default session, created lazily with the default environment.
+  - Mainly for simple and legacy use; agent packages should usually create their own sessions.
+
+- `(flywire-session-exec session steps &optional opts)`
+  - Execute a list of steps synchronously in the context of `session`.
+  - Internally calls `(flywire-env-run (flywire-session-env session) (lambda () ...))`.
+  - `opts` can include:
+    - `:snapshot-before` (boolean or profile name).
+    - `:snapshot-after` (boolean or profile name).
+  - Returns a structured execution result (see next section).
+
+- `(flywire-session-start-async session steps &optional opts)`
+  - Async equivalent of `exec`.
+  - Immediately returns a token (e.g., an id) or `:started`.
+  - Emits events for `:step-start`, `:step-end`, errors, and optionally snapshots via the session event handlers.
+
+- `(flywire-session-enable-events session &optional opts)`
+  - Asks the session environment to set up any required hooks/timers for emitting events (idle, minibuffer, etc.).
+  - Core will call `(flywire-env-enable-events env)` if provided.
+
+- `(flywire-session-on-event session handler)`
+  - Register an event handler function `(lambda (event) ...)` for the session.
+
+- `(flywire-session-cancel session &optional cause)`
+  - Request cancellation of in-flight async execution (e.g., by signaling `quit` or a custom condition in the worker context).
+
+*** 2. Structured Execution Semantics
+
+We define a standard shape for execution results so external tools and agents can reason about them.
+
+- Result shape (plist):
+
+  - `:status` — one of `:ok`, `:error`, `:cancelled`, `:timeout`.
+  - `:steps` — list of per-step results (optional but useful for debugging).
+  - `:messages` — captured messages emitted during execution.
+  - `:error` — plist with `:type`, `:message`, and optional `:data`.
+  - `:snapshot` — optional snapshot plist (controlled by options and environment).
+
+- Per-step result shape:
+
+  - `:step-index` — zero-based index.
+  - `:action` — original step description.
+  - `:status`, `:error`, `:messages` — same semantics as top-level fields.
+  - Optional `:snapshot` if enabled.
+
+Implementation sketch:
+
+- Introduce an internal helper:
+
+  - `flywire--execute-steps-with-result` that:
+    - Runs a sequence of steps (using the action layer).
+    - Wraps execution in `condition-case` to capture errors.
+    - Treats `quit` (`C-g`) as `:cancelled`.
+    - Captures messages via temporary rebinding or `*Messages*` deltas.
+
+- `flywire-session-exec`:
+  - Wraps `flywire--execute-steps-with-result` in the session environment via `env-run`.
+  - Attaches snapshots before/after as requested.
+
+- `flywire-session-start-async`:
+  - Uses `env-run` to start execution in the right context (e.g., via `make-thread` or Emacs async machinery appropriate for the package).
+  - Emits events:
+    - `:step-start` / `:step-end` around each step.
+    - `:snapshot` events if configured.
+    - A final `:session-end` or `:exec-complete` event.
+
+*** 3. Snapshot Layer: Profiles and Extensions
+
+We extend `flywire-snapshot.el` to support snapshot profiles and external extensions, in a way that is compatible with environments.
+
+- Snapshot collectors (existing and new):
+
+  - Existing: `buffer-info`, `content`, `cursor`, `minibuffer`, `window-configuration`.
+  - New: `messages`, `visible-content`, `processes`, etc.
+
+- Profiles:
+
+  - `flywire-snapshot-profiles` defcustom mapping profile names to collector lists:
+
+#+begin_src elisp
+(defcustom flywire-snapshot-profiles
+  '((minimal . (buffer-info cursor minibuffer))
+    (default . (buffer-info content cursor minibuffer window-configuration messages))
+    (rich . (buffer-info content visible-content cursor minibuffer window-configuration messages processes)))
+  "Mapping of snapshot profile names to collector symbols.")
+#+end_src
+
+- `flywire-snapshot-get-snapshot` signature:
+
+  - `(flywire-snapshot-get-snapshot &optional profile collectors)`
+    - `profile`: selects a profile from `flywire-snapshot-profiles`.
+    - `collectors`: explicit override list.
+
+- Extension hook:
+
+#+begin_src elisp
+(defvar flywire-snapshot-collect-hook nil
+  "Hook run after core snapshot collection. Receives the snapshot plist.")
+
+;; In flywire-snapshot-get-snapshot, after core collection:
+(run-hook-with-args 'flywire-snapshot-collect-hook result)
+#+end_src
+
+Environments decide *where* snapshots are taken (which frame/windows) by controlling the context in which `flywire-snapshot-get-snapshot` runs.
+
+*** 4. Async / Event Model
+
+Async and events are part of the initial design, not a later phase, because many target workflows are inherently interactive.
+
+Core pieces:
+
+- *Event shape*: as described above, with `:type`, `:session`, `:snapshot`, `:result`, etc.
+
+- *Session event dispatch*:
+  - Each session keeps a list of event handlers.
+  - A helper `flywire--emit-event` takes a session and event plist, and calls all handlers.
+
+- *Environment-specific event wiring*:
+  - `flywire-session-enable-events` delegates to `env-enable-events` when present.
+  - A default environment implementation might:
+    - Attach to `minibuffer-setup-hook` and `minibuffer-exit-hook` to emit `:minibuffer-open` / `:minibuffer-close` events with snapshots.
+    - Use an idle timer to periodically emit `:snapshot` or `:idle` events.
+
+- *`flywire-async-mode` as a convenience*:
+  - `flywire-async-mode` can be retained as a simple way to
+    - Use `flywire-session-current`.
+    - Enable events for this default session using the default environment.
+    - Forward snapshots/events to a global handler (e.g., `flywire-async-output-handler`).
+  - It is explicitly a convenience shim over the session/event model, not the core abstraction.
+
+- *Interactive agent workflows*:
+  - Agents can subscribe to session events and build workflows like:
+    - Issue steps that open minibuffer prompts.
+    - Wait for `:minibuffer-open` events to confirm prompts.
+    - React to `:minibuffer-close` / `:snapshot` events to decide next actions.
+  - Environments can refine what counts as "interesting" (e.g., only consider prompts in a specific frame or buffer).
+
+*** 5. Action Layer: Tools and Context
+
+The action layer remains responsible for turning step descriptions (often JSON) into actual Emacs operations.
+
+- Primitives (existing):
+
+  - `flywire-action-push-input` — queue text into `unread-command-events`.
+  - `flywire-action-simulate-keys` — parse key chord strings and queue events.
+  - `flywire-action-execute-tool` — dispatch based on a `tool-name` string.
+
+- Action registry:
+
+#+begin_src elisp
+(defvar flywire-action-registry (make-hash-table :test 'equal))
+
+(defun flywire-register-action (name fn &optional plist)
+  (puthash name (list :fn fn :meta plist) flywire-action-registry))
+#+end_src
+
+- `flywire-action-execute-tool` will consult this registry to find handlers for tools like `type_text`, `press_key`, `run_command`, `cancel`, `goto_location`, etc.
+
+- Context fields in steps:
+  - Steps can optionally carry context hints, such as:
+    - `buffer` — name or file.
+    - `window-id` — token from a previous snapshot.
+  - `flywire--execute-step` can then run in the right buffer/window, in addition to the environment context.
+
+*** 6. Safety / Policy Hooks
+
+We introduce simple, global and per-session safety hooks that environments and agents can build on.
+
+- Global predicate:
+
+#+begin_src elisp
+(defcustom flywire-allow-command-p #'flywire--allow-all
+  "Predicate to decide whether a command may be run.")
+#+end_src
+
+- Before running a `run_command` action, `flywire-action-execute-tool` will consult this predicate (and, later, per-session or per-environment safety settings).
+
+- Future extensions:
+  - Per-session allowlists (only allow a subset of commands/tools).
+  - Policies tied to file paths or project roots.
+
+*** 7. API Evolution
+
+Because flywire is unpublished, we can optimize for clarity and quality of the session-centric API rather than strict stability.
+
+- Existing entry points will be adapted as *convenience shims* where they still pull their weight:
+  - `flywire-do` → internally create or reuse a default session and call `flywire-session-exec`, returning just a snapshot or result.
+  - `flywire-do-async` → call `flywire-session-start-async` on the default session.
+  - `flywire-snapshot-get-snapshot` → remain as the low-level snapshot primitive used by environments.
+  - `flywire-async-mode` → configure events for the default session and forward them to a global handler.
+
+- It is acceptable to change or remove these shims as the new APIs stabilize. Tests will be updated to reflect intentional changes, not to enforce strict backwards compatibility.
+
+** Testing Strategy
+
+We will lean on the existing test harness and files in `test/` and introduce a few new helpers to make sessions and environments easy to exercise.
+
+*** Levels and files
+
+- Unit and integration tests:
+  - `test/flywire-test.el` — core session, environment, and snapshot behavior.
+  - `test/flywire-async-test.el` — async execution and event dispatch.
+  - `test/flywire-config-test.el` — any new user-facing configuration options tied to sessions/environments.
+
+- Property-based tests:
+  - `test/flywire-property-test.el` — invariants for execution and snapshots, e.g.:
+    - Executing an empty step list is idempotent for buffer/window state.
+    - Session execution respects the environment’s `run` function (no cross-contamination between envs).
+
+- End-to-end tests:
+  - `test/flywire-e2e-test.el` — simple agent-like workflows that:
+    - Create a session with a test environment.
+    - Drive a small sequence of steps (e.g., editing a buffer, interacting with minibuffer).
+    - Assert on snapshots and events, not just final buffer contents.
+  - `test/run-tests.el` and `test/run-lint.el` remain the top-level entry points.
+
+*** Test helpers and fixtures
+
+To keep tests maintainable and decoupled from UI specifics, we will:
+
+- Introduce one or more *test environments* implemented only in the test suite, e.g.:
+  - `flywire-test-env-headless` — runs code in a dedicated buffer, no real frames assumed.
+  - `flywire-test-env-current` — wraps `flywire-env-default` but exposes hooks for assertions.
+- Provide utility functions/macros for async tests:
+  - Helpers to subscribe to session events and wait (with timeout) for specific `:type` values.
+  - A small DSL or helper to "execute steps and collect all events" for assertions.
+
+Phase-specific sections below call out which tests to add or update in each phase, but this section defines the overall approach.
+
+** Phased Implementation Plan
+
+We will approach this in phases, but async and the environment abstraction are part of the *initial* work.
+
+*** Phase 1: Core Session, Environment, and Async Baseline
+
+Goal: Introduce sessions, environments, structured execution, and a minimal session-scoped event model, while keeping the library testable.
+
+Tasks:
+
+1. *Define environment and session structs*
+   - Implement `flywire-env` struct and `flywire-env-default`.
+   - Implement `flywire-session` struct and `flywire-session-create` / `flywire-session-current`.
+
+2. *Structured execution helper*
+   - Implement `flywire--execute-steps-with-result` with:
+     - Error and `quit` handling.
+     - Message capture.
+     - Per-step results.
+
+3. *Session execution APIs*
+   - Implement `flywire-session-exec` and `flywire-session-start-async`, using the environment `run` function.
+   - Define the result shape and ensure tests cover:
+     - Successful execution.
+     - Failing command.
+     - Cancelled execution.
+
+4. *Basic session event model*
+   - Define event shape and a small dispatcher (`flywire--emit-event`).
+   - Implement `flywire-session-on-event` and event handler storage.
+   - Emit `:step-start`, `:step-end`, and `:exec-complete` events from `flywire-session-start-async`.
+
+5. *Environment-based async wiring*
+   - Extend `flywire-env` with `enable-events`.
+   - Implement `flywire-session-enable-events` to delegate to the environment.
+   - For the default environment, optionally implement a minimal idle/minibuffer event setup.
+
+6. *Wire basic shims*
+   - Make `flywire-do` and `flywire-do-async` delegate to the session APIs using the default session.
+
+7. *Tests*
+    - Add tests and fixtures across existing files:
+      - In `test/flywire-test.el`: unit tests for `flywire-env-default`, `flywire-session-create`, `flywire-session-exec`, and the shape of execution results.
+      - In `test/flywire-async-test.el`: async tests that use a headless test environment to verify `flywire-session-start-async`, event emission (`:step-start`, `:step-end`, `:exec-complete`), and cancellation behavior.
+      - In `test/flywire-e2e-test.el`: a simple end-to-end test that drives a short step sequence through a session, asserts on both final buffer contents and the sequence of emitted events.
+
+
+*** Phase 2: Snapshot Profiles and Extensions
+
+Goal: Make snapshots configurable and extensible, and integrate them cleanly with sessions and environments.
+
+Tasks:
+
+1. *Snapshot profiles*
+   - Add `flywire-snapshot-profiles` and update `flywire-snapshot-get-snapshot` to accept a `profile` argument.
+   - Make the session options support `:snapshot-profile`.
+
+2. *Messages and visible content*
+   - Implement collectors for `messages` and `visible-content`.
+   - Integrate them into the `default` and `rich` profiles.
+
+3. *Extension hooks*
+   - Implement `flywire-snapshot-collect-hook`.
+   - Add tests to verify that external code can extend snapshot data.
+
+4. *Session integration*
+   - Update `flywire-session-exec` and `flywire-session-start-async` to use the session’s snapshot profile and the environment for snapshot collection.
+
+*** Phase 3: Action Registry and Context-Aware Execution
+
+Goal: Make the tool/action layer more extensible and expressive, and better aligned with the session/environment model.
+
+Tasks:
+
+1. *Action registry*
+   - Implement `flywire-action-registry` and `flywire-register-action`.
+   - Port existing tools (`type_text`, `press_key`, `run_command`) into the registry.
+
+2. *Context fields in steps*
+   - Extend step format to optionally include `buffer` and `window-id`.
+   - Update `flywire--execute-step` to honor these fields inside the environment context.
+
+3. *New built-in actions*
+   - Implement `cancel`, `goto_location`, and basic buffer navigation actions.
+   - Add tests for these actions.
+
+*** Phase 4: Safety Hooks and Documentation
+
+Goal: Add basic policy hooks and document the new session/environment/event model.
+
+Tasks:
+
+1. *Safety policy hooks*
+   - Introduce `flywire-allow-command-p` and integrate it into `run_command`.
+   - Add tests for simple allow/deny policies.
+
+2. *Documentation*
+   - Update `README.org` with:
+     - Session and environment concepts.
+     - Sync and async execution examples.
+     - Snapshot profiles and extension hooks.
+   - Update `AGENT.md` (or similar) with:
+     - Guidance for building agent environments (e.g., dedicated frame env).
+     - How to consume session events for interactive workflows.
+   - Document how test runners can provide headless environments.
+
+3. *API review*
+   - Revisit the convenience shims (`flywire-do`, `flywire-do-async`, `flywire-async-mode`) and decide whether they are still pulling their weight.
+   - If necessary, adjust or remove them with clear docstring guidance.
+
+** Acceptance Criteria
+
+For the primary agent use case (an agent running in its own environment, possibly a separate frame):
+
+- The agent can:
+  - Create a dedicated session with an environment that controls where actions run.
+  - Execute sync and async step sequences through a single entry point.
+  - Receive structured results and session-scoped events, including snapshots.
+  - React to minibuffer and idle state via the event stream.
+
+- The user can:
+  - Continue working in their main frame while the agent runs in its environment.
+  - Optionally "attach" to the agent environment (e.g., show the agent frame) without changing flywire core.
+
+For other use cases (tests, headless runs, batch mode):
+
+- A test runner can:
+  - Provide a headless environment that does not depend on frames.
+  - Use the same session and execution APIs.
+  - Obtain snapshots and events suitable for assertions.
+
+For the library overall:
+
+- Sessions and environments are the primary entry point for new integrations.
+- Snapshot extensions are possible without forking flywire.
+- Command execution can be restricted via simple, documented hook points.
+- Tests pass in batch mode, and the API remains usable in live user sessions.
+
+End of plan.
