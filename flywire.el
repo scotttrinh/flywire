@@ -82,10 +82,9 @@ Signals an error if execution fails."
 (defun flywire-do-async (instructions)
   "Execute INSTRUCTIONS asynchronously.
 INSTRUCTIONS must be a list of action alists.
-Returns \='started symbol immediately.  The actions are scheduled on a timer.
+Returns an async handle immediately.  The actions are scheduled on a timer.
 State updates will be pushed via `flywire-async-output-handler`."
-  (flywire-session-start-async (flywire-session-current) instructions)
-  'started)
+  (flywire-session-start-async (flywire-session-current) instructions))
 
 (provide 'flywire)
 ;;; flywire.el ends here

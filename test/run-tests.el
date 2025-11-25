@@ -28,6 +28,8 @@
 (defconst flywire-test-directory
   (expand-file-name "test" flywire-test-root))
 
+(add-to-list 'load-path flywire-test-directory)
+
 ;; Load all test files
 (dolist (file (directory-files flywire-test-directory t "-test\\.el\\'"))
   (load file nil nil t))

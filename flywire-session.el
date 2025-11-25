@@ -32,6 +32,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'subr-x)
 (require 'flywire-action)
 (require 'flywire-snapshot)
 (require 'flywire-policy)
@@ -53,21 +54,79 @@
   state        ; internal state (messages, throttling, etc.)
   handlers)    ; event handlers / callbacks
 
+(cl-defstruct flywire-session-async-handle
+  "Handle for in-flight asynchronous execution."
+  id
+  session
+  timer
+  status
+  result
+  cancel-reason
+  opts)
+
+(defvar flywire-session--async-counter 0
+  "Counter for generating async handle ids.")
+
 (defvar flywire-session--current nil
   "Global default session.")
 
-(defun flywire-session--resolve-safety-policy (session)
-  "Return the safety policy predicate for SESSION.
+(defun flywire-session--resolve-safety-policy (session opts)
+  "Return the safety policy predicate for SESSION using OPTS overrides.
 Falls back to the global `flywire-policy-allow-command-p`."
-  (or (plist-get (flywire-session-options session) :safety-policy)
+  (or (plist-get opts :safety-policy)
+      (plist-get (flywire-session-options session) :safety-policy)
       flywire-policy-allow-command-p))
 
 ;;; Core Session API
 
-(defun flywire-session--default-enable-events (_session _opts)
-  "Default event setup: do nothing for now."
-  ;; This can be expanded to replicate flywire-async behavior scoped to the session
-  nil)
+(defvar flywire-session--default-event-state (make-hash-table :test 'eq)
+  "Tracking table for default env event hooks keyed by session.")
+
+(defun flywire-session--default-teardown-events (session)
+  "Remove default event wiring for SESSION."
+  (let ((state (gethash session flywire-session--default-event-state)))
+    (when state
+      (when-let ((hook (plist-get state :minibuffer-hook)))
+        (remove-hook 'minibuffer-setup-hook hook))
+      (when-let ((timer (plist-get state :idle-timer)))
+        (cancel-timer timer))
+      (remhash session flywire-session--default-event-state))))
+
+(defun flywire-session--default-enable-events (session opts)
+  "Install default minibuffer/idle event emitters for SESSION using OPTS."
+  (unless (gethash session flywire-session--default-event-state)
+    (let* ((env (flywire-session-env session))
+           (run-fn (flywire-session-env-run env))
+           (snapshot-fn (flywire-session-env-snapshot env))
+           (snapshot-profile (or (flywire-session--snapshot-profile session t
+                                                                     (plist-get (flywire-session-options session) :snapshot-profile))
+                                 (plist-get (flywire-session-options session) :snapshot-profile)))
+           (idle-delay (or (plist-get opts :idle-delay) 0.5))
+           (minibuffer-hook
+            (lambda ()
+              (funcall run-fn
+                       (lambda ()
+                         (flywire-session--emit-event-maybe
+                          session opts
+                          (list :type :minibuffer-open
+                                :session session
+                                :snapshot (funcall snapshot-fn snapshot-profile)))))))
+           (idle-handler
+            (lambda ()
+              (funcall run-fn
+                       (lambda ()
+                         (flywire-session--emit-event-maybe
+                          session opts
+                          (list :type :idle
+                                :session session
+                                :snapshot (funcall snapshot-fn snapshot-profile)))))))
+           (idle-timer (run-with-idle-timer idle-delay t idle-handler)))
+      (add-hook 'minibuffer-setup-hook minibuffer-hook)
+      (puthash session
+               (list :minibuffer-hook minibuffer-hook
+                     :idle-timer idle-timer
+                     :opts opts)
+               flywire-session--default-event-state))))
 
 (defun flywire-session-env-default ()
   "Return a default environment representing the current Emacs session."
@@ -75,7 +134,8 @@ Falls back to the global `flywire-policy-allow-command-p`."
    :name "default"
    :run #'funcall
    :snapshot #'flywire-snapshot-get-snapshot
-   :enable-events #'flywire-session--default-enable-events))
+   :enable-events #'flywire-session--default-enable-events
+   :teardown #'flywire-session--default-teardown-events))
 
 (defun flywire-session-create (&rest args)
   "Create a new session.
@@ -94,21 +154,62 @@ ARGS can include :id, :env, :snapshot-profile, :safety-policy, :events."
   (or flywire-session--current
       (setq flywire-session--current (flywire-session-create :id 'global))))
 
+(defun flywire-session--register-async-handle (session handle)
+  "Track HANDLE as the active async execution for SESSION."
+  (setf (flywire-session-state session)
+        (plist-put (flywire-session-state session) :async-handle handle))
+  handle)
+
+(defun flywire-session--active-async-handle (session)
+  "Return the active async handle for SESSION, if any."
+  (plist-get (flywire-session-state session) :async-handle))
+
+(defun flywire-session--event-enabled-p (session opts type)
+  "Return non-nil if event TYPE should be emitted for SESSION given OPTS."
+  (let ((events (or (plist-get opts :events)
+                    (plist-get (flywire-session-options session) :events)
+                    :all)))
+    (cond
+     ((or (eq events :all) (null events)) t)
+     ((eq events :none) nil)
+     ((listp events) (memq type events))
+     (t t))))
+
 (defun flywire-session-on-event (session handler)
   "Register HANDLER for events on SESSION."
-  (push handler (flywire-session-handlers session)))
+  (push handler (flywire-session-handlers session))
+  handler)
+
+(defun flywire-session-off-event (session handler)
+  "Unregister HANDLER from SESSION events."
+  (setf (flywire-session-handlers session)
+        (delq handler (flywire-session-handlers session))))
 
 (defun flywire-session-enable-events (session &optional opts)
   "Ask the SESSION environment to set up any required hooks/timers.
 OPTS are passed to the environment's enable-events function."
   (let ((env (flywire-session-env session)))
-    (funcall (flywire-session-env-enable-events env) session opts)))
+    (funcall (flywire-session-env-run env)
+             (lambda ()
+               (funcall (flywire-session-env-enable-events env) session opts)))))
+
+(defun flywire-session-disable-events (session)
+  "Tear down any event hooks/timers for SESSION via the environment."
+  (let ((env (flywire-session-env session)))
+    (funcall (flywire-session-env-run env)
+             (lambda ()
+               (funcall (flywire-session-env-teardown env) session)))))
 
 (defun flywire-session--emit-event (session event)
   "Emit EVENT to handlers on SESSION."
   (let ((handlers (flywire-session-handlers session)))
     (dolist (h handlers)
       (funcall h event))))
+
+(defun flywire-session--emit-event-maybe (session opts event)
+  "Emit EVENT for SESSION if enabled by OPTS or session defaults."
+  (when (flywire-session--event-enabled-p session opts (plist-get event :type))
+    (flywire-session--emit-event session event)))
 
 ;;; Execution Logic
 
@@ -149,95 +250,227 @@ STEP should be an alist with at least an `action` entry."
             (flywire-action-execute-tool tool-name step)))
       (error "Flywire: unknown action %S" step))))
 
-(defun flywire-session--capture-messages (thunk)
-  "Run THUNK and return any new text added to *Messages*."
-  (let* ((msg-buf (get-buffer-create "*Messages*"))
-         (start (with-current-buffer msg-buf (point-max))))
-    (funcall thunk)
-    (with-current-buffer msg-buf
-      (if (> (point-max) start)
-          (buffer-substring-no-properties start (point-max))
-        nil))))
+(defun flywire-session--capture-message-delta (buffer start-pos)
+  "Return list of messages appended to BUFFER since START-POS."
+  (with-current-buffer buffer
+    (when (> (point-max) start-pos)
+      (split-string (buffer-substring-no-properties start-pos (point-max)) "\n" t))))
+
+(defun flywire-session--snapshot-profile (session value &optional fallback)
+  "Resolve snapshot profile for SESSION from VALUE with optional FALLBACK.
+If VALUE is t, prefer FALLBACK or the session's :snapshot-profile.  If VALUE
+is a symbol, use it directly.  A nil return value means use default collectors."
+  (let ((session-profile (or fallback (plist-get (flywire-session-options session) :snapshot-profile))))
+    (cond
+     ((eq value t) session-profile)
+     ((symbolp value) value)
+     (t nil))))
 
 (defun flywire-session--execute-steps-with-result (session instructions &optional opts)
   "Execute INSTRUCTIONS using SESSION and OPTS.
-Returns a result plist.  Captures errors and messages.
-Honors SESSION safety policy."
-  (ignore opts)
-  (let ((step-results nil)
-        (status :ok)
-        (error-info nil)
-        (captured-messages nil)
-        (policy (flywire-session--resolve-safety-policy session)))
+Returns a result plist that includes per-step messages/errors/snapshots.
+Honors safety policy overrides from OPTS."
+  (let* ((env (flywire-session-env session))
+         (snapshot-fn (flywire-session-env-snapshot env))
+         (session-snapshot-profile (or (plist-get opts :snapshot-profile)
+                                       (plist-get (flywire-session-options session) :snapshot-profile)))
+         (policy (flywire-session--resolve-safety-policy session opts))
+         (cancelled-p (or (plist-get opts :cancelled-p) (lambda () nil)))
+         (on-step-start (plist-get opts :on-step-start))
+         (on-step-end (plist-get opts :on-step-end))
+         (snap-before-opt (plist-get opts :snapshot-before))
+         (snap-after-opt (plist-get opts :snapshot-after))
+         (step-snapshot-profile
+          (let ((opt (plist-get opts :snapshot-per-step)))
+            (cond
+             ;; Explicit opt-out
+             ((and (plist-member opts :snapshot-per-step) (not opt)) nil)
+             ((plist-member opts :snapshot-per-step)
+              (flywire-session--snapshot-profile session opt session-snapshot-profile))
+             (t session-snapshot-profile))))
+         (message-buffer (get-buffer-create "*Messages*"))
+         (messages-start (with-current-buffer message-buffer (point-max)))
+         (status :ok)
+         (error-info nil)
+         (step-results nil)
+         (step-index 0)
+         (snapshot-before nil)
+         (snapshot-after nil))
+    (when snap-before-opt
+      (setq snapshot-before (funcall snapshot-fn (flywire-session--snapshot-profile session snap-before-opt session-snapshot-profile))))
     (let ((flywire-policy-allow-command-p policy))
-      (setq captured-messages
-            (flywire-session--capture-messages
-             (lambda ()
-               (condition-case err
-                   (dolist (step instructions)
-                     (flywire-session--execute-step step)
-                     (push `((:step-index . ,(length step-results))
-                             (:action . ,step)
-                             (:status . :ok))
-                           step-results))
-                 (quit
-                  (setq status :cancelled)
-                  (setq error-info '(:type quit :message "Cancelled")))
-                 (error
-                  (setq status :error)
-                  (setq error-info `(:type error :message ,(error-message-string err) :data ,err))))))))
-    (list :status status
-          :steps (nreverse step-results)
-          :messages captured-messages
-          :error error-info)))
+      (cl-block :steps
+        (dolist (step instructions)
+          (let ((cancelled (funcall cancelled-p)))
+            (when cancelled
+              (setq status :cancelled)
+              (setq error-info
+                    (or error-info
+                        (if (stringp cancelled)
+                            `(:type cancel :message ,cancelled)
+                          '(:type cancel :message "Cancelled"))))
+              (cl-return-from :steps)))
+          (when on-step-start (funcall on-step-start step-index step))
+          (let* ((step-start (with-current-buffer message-buffer (point-max)))
+                 (step-status :ok)
+                 (step-error nil)
+                 (step-messages nil)
+                 (step-snapshot nil))
+            (condition-case err
+                (flywire-session--execute-step step)
+              (quit
+               (setq step-status :cancelled)
+               (setq status :cancelled)
+               (setq step-error '(:type quit :message "Cancelled"))
+               (setq error-info step-error))
+              (error
+               (setq step-status :error)
+               (setq status :error)
+               (setq step-error `(:type error :message ,(error-message-string err) :data ,err))
+               (setq error-info step-error)))
+            (setq step-messages (flywire-session--capture-message-delta message-buffer step-start))
+            (when step-snapshot-profile
+              (setq step-snapshot (funcall snapshot-fn step-snapshot-profile)))
+            (let ((step-res (list :step-index step-index
+                                  :action step
+                                  :status step-status)))
+              (when step-messages (setq step-res (plist-put step-res :messages step-messages)))
+              (when step-error (setq step-res (plist-put step-res :error step-error)))
+              (when step-snapshot (setq step-res (plist-put step-res :snapshot step-snapshot)))
+              (push step-res step-results)
+              (when on-step-end (funcall on-step-end step-res)))
+            (cl-incf step-index)
+            (when (memq step-status '(:cancelled :error))
+              (cl-return-from :steps)))))) ; stop on first cancellation/error
+    (when snap-after-opt
+      (setq snapshot-after (funcall snapshot-fn (flywire-session--snapshot-profile session snap-after-opt session-snapshot-profile))))
+    (let ((captured-messages (flywire-session--capture-message-delta message-buffer messages-start))
+          (result (list :status status
+                        :steps (nreverse step-results))))
+      (when captured-messages (setq result (plist-put result :messages captured-messages)))
+      (when error-info (setq result (plist-put result :error error-info)))
+      (when snapshot-before (setq result (plist-put result :snapshot-before snapshot-before)))
+      (when snapshot-after
+        (setq result (plist-put result :snapshot-after snapshot-after))
+        ;; Maintain legacy :snapshot key for callers expecting it
+        (setq result (plist-put result :snapshot snapshot-after)))
+      result)))
 
 (defun flywire-session-exec (session instructions &optional opts)
   "Run INSTRUCTIONS synchronously in SESSION context.
 Returns a structured result plist.
 OPTS can contain :snapshot-after (boolean or profile name)."
-  (let ((env (flywire-session-env session))
-        (session-profile (plist-get (flywire-session-options session) :snapshot-profile)))
+  (let ((env (flywire-session-env session)))
     (funcall (flywire-session-env-run env)
              (lambda ()
-               (let ((res (flywire-session--execute-steps-with-result session instructions opts)))
-                 (let ((snap-opt (plist-get opts :snapshot-after)))
-                   (when snap-opt
-                     (let ((profile (if (and (symbolp snap-opt) (not (eq snap-opt t)))
-                                        snap-opt
-                                      session-profile)))
-                       (setq res (plist-put res :snapshot
-                                            (funcall (flywire-session-env-snapshot env) profile))))))
-                 res)))))
+               (flywire-session--execute-steps-with-result session instructions opts)))))
 
 (defun flywire-session-start-async (session instructions &optional opts)
   "Run INSTRUCTIONS asynchronously in SESSION context.
-Returns \='started immediately.
-If :snapshot-profile is set in SESSION options, snapshots are emitted with
-:step-end events."
-  (ignore opts)
-  (let ((env (flywire-session-env session))
-        (session-profile (plist-get (flywire-session-options session) :snapshot-profile))
-        (policy (flywire-session--resolve-safety-policy session)))
-    (funcall (flywire-session-env-run env)
-             (lambda ()
-               (run-with-timer 0 nil
-                               (lambda ()
-                                 (let ((flywire-policy-allow-command-p policy))
-                                   (flywire-session--emit-event session `(:type :exec-start :session ,session))
-                                   (dolist (step instructions)
-                                     (flywire-session--emit-event session `(:type :step-start :session ,session :action ,step))
-                                     (condition-case err
-                                         (let ((step-res nil)) (flywire-session--execute-step step)
-                                           (setq step-res `(:type :step-end :session ,session :action ,step :status :ok))
-                                           ;; Attach snapshot if configured
-                                           (when session-profile
-                                             (setq step-res (plist-put step-res :snapshot
-                                                                       (funcall (flywire-session-env-snapshot env) session-profile))))
-                                           (flywire-session--emit-event session step-res))
-                                       (error
-                                        (flywire-session--emit-event session `(:type :step-end :session ,session :action ,step :status :error :error ,err)))))
-                                   (flywire-session--emit-event session `(:type :exec-complete :session ,session))))))))
-  'started)
+Returns a handle object that can be used with `flywire-session-cancel`.
+If :snapshot-profile is set in SESSION options, snapshots are attached to
+:step-end events and results."
+  (let* ((env (flywire-session-env session))
+         (run-fn (flywire-session-env-run env))
+         (handle (make-flywire-session-async-handle
+                  :id (format "flywire-async-%d" (cl-incf flywire-session--async-counter))
+                  :session session
+                  :status :scheduled
+                  :opts opts)))
+    (flywire-session--register-async-handle session handle)
+    (setf (flywire-session-async-handle-timer handle)
+          (run-with-timer
+           0 nil
+           (lambda ()
+             (funcall run-fn
+                      (lambda ()
+                        (let ((cancel-reason (flywire-session-async-handle-cancel-reason handle)))
+                          (if cancel-reason
+                              (let ((result `(:status :cancelled :error (:type cancel :message ,cancel-reason))))
+                                (setf (flywire-session-async-handle-status handle) :cancelled)
+                                (setf (flywire-session-async-handle-result handle) result)
+                                (flywire-session--emit-event-maybe
+                                 session opts
+                                 `(:type :exec-complete
+                                         :session ,session
+                                         :handle ,(flywire-session-async-handle-id handle)
+                                         :result ,result))
+                                (setf (flywire-session-async-handle-timer handle) nil))
+                            (setf (flywire-session-async-handle-status handle) :running)
+                            (flywire-session--emit-event-maybe
+                             session opts
+                             `(:type :exec-start
+                                     :session ,session
+                                     :handle ,(flywire-session-async-handle-id handle)))
+                            (let* ((exec-opts (plist-put opts :cancelled-p
+                                                         (lambda ()
+                                                           (flywire-session-async-handle-cancel-reason handle))))
+                                   (exec-opts (plist-put exec-opts :on-step-start
+                                                         (lambda (idx step)
+                                                           (flywire-session--emit-event-maybe
+                                                            session opts
+                                                            `(:type :step-start
+                                                                    :session ,session
+                                                                    :handle ,(flywire-session-async-handle-id handle)
+                                                                    :step-index ,idx
+                                                                    :action ,step)))))
+                                   (exec-opts (plist-put exec-opts :on-step-end
+                                                         (lambda (step-res)
+                                                           (let ((event (copy-sequence step-res)))
+                                                             (setq event (plist-put event :type :step-end))
+                                                             (setq event (plist-put event :session session))
+                                                             (setq event (plist-put event :handle (flywire-session-async-handle-id handle)))
+                                                             (flywire-session--emit-event-maybe session opts event)))))
+                                   (result
+                                    (flywire-session--execute-steps-with-result
+                                     session instructions exec-opts)))
+                              (setf (flywire-session-async-handle-result handle) result)
+                              (setf (flywire-session-async-handle-status handle) (plist-get result :status))
+                              (flywire-session--emit-event-maybe
+                               session opts
+                               `(:type :exec-complete
+                                       :session ,session
+                                       :handle ,(flywire-session-async-handle-id handle)
+                                       :result ,result))
+                              (setf (flywire-session-async-handle-timer handle) nil)))))))))
+    handle))
+
+(defun flywire-session-cancel (session-or-handle &optional cause)
+  "Request cancellation of in-flight async execution.
+SESSION-OR-HANDLE can be a session or a specific async handle.
+CAUSE is an optional string describing the reason."
+  (let* ((handle (if (flywire-session-async-handle-p session-or-handle)
+                     session-or-handle
+                   (flywire-session--active-async-handle session-or-handle)))
+         (session (if (flywire-session-async-handle-p session-or-handle)
+                      (flywire-session-async-handle-session session-or-handle)
+                    session-or-handle)))
+    (unless handle
+      (error "Flywire: no async execution to cancel"))
+    (let* ((reason (or cause (flywire-session-async-handle-cancel-reason handle) "Cancelled"))
+           (result `(:status :cancelled :error (:type cancel :message ,reason)))
+           (opts (flywire-session-async-handle-opts handle)))
+      (setf (flywire-session-async-handle-cancel-reason handle) reason)
+      (setf (flywire-session-async-handle-status handle) :cancelled)
+      (setf (flywire-session-async-handle-result handle) result)
+      (let ((timer (flywire-session-async-handle-timer handle)))
+        (when (timerp timer)
+          (cancel-timer timer)
+          (setf (flywire-session-async-handle-timer handle) nil)))
+      (flywire-session--emit-event-maybe
+       session opts
+       `(:type :exec-cancelled
+               :session ,session
+               :handle ,(flywire-session-async-handle-id handle)
+               :reason ,reason
+               :result ,result))
+      (flywire-session--emit-event-maybe
+       session opts
+       `(:type :exec-complete
+               :session ,session
+               :handle ,(flywire-session-async-handle-id handle)
+               :result ,result))
+      :cancelled)))
 
 (provide 'flywire-session)
 ;;; flywire-session.el ends here

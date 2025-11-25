@@ -37,6 +37,8 @@
 (require 'flywire-policy)
 (require 'json)
 
+(declare-function flywire-session--snapshot-profile "flywire-session" (session value &optional fallback))
+
 (defcustom flywire-async-output-handler #'flywire-async-default-output-handler
   "Function to call with the snapshot plist when state changes.
 The function receives a single argument: the snapshot plist."
@@ -47,60 +49,62 @@ The function receives a single argument: the snapshot plist."
   "Default handler: print SNAPSHOT as JSON to stdout."
   (message "EMACS_DRIVER_SNAPSHOT:%s" (json-encode snapshot)))
 
-(defvar flywire-async--idle-timer nil)
+(defvar flywire-async--session-handlers (make-hash-table :test 'eq)
+  "Map of sessions to their async event handlers.")
 
-(defun flywire-async--on-minibuffer-setup ()
-  "Called when minibuffer opens."
-  ;; Slight delay to ensure minibuffer content is ready?
-  ;; Usually setup hook is run when buffer is ready.
-  (funcall flywire-async-output-handler (flywire-snapshot-get-snapshot)))
+(defun flywire-async--snapshot-for-session (session &optional profile)
+  "Collect a snapshot for SESSION using PROFILE if provided."
+  (let* ((env (flywire-session-env session))
+         (run-fn (flywire-session-env-run env))
+         (snap-fn (flywire-session-env-snapshot env))
+         (profile (or profile (plist-get (flywire-session-options session) :snapshot-profile))))
+    (funcall run-fn
+             (lambda ()
+               (funcall snap-fn (flywire-session--snapshot-profile session t profile))))))
 
-(defun flywire-async--on-idle ()
-  "Called when Emacs is idle."
-  (funcall flywire-async-output-handler (flywire-snapshot-get-snapshot)))
+(defun flywire-async--event->snapshot (event)
+  "Extract or build a snapshot for EVENT."
+  (or (plist-get event :snapshot)
+      (when-let ((result (plist-get event :result)))
+        (or (plist-get result :snapshot-after)
+            (plist-get result :snapshot)
+            (plist-get result :snapshot-before)))
+      (let ((session (plist-get event :session)))
+        (when (flywire-session-p session)
+          (flywire-async--snapshot-for-session session)))))
 
 (defun flywire-async--session-adapter (event)
   "Forward session EVENT to the output handler."
   (let ((type (plist-get event :type)))
-    ;; Forward interesting events
-    (when (memq type '(:step-end :exec-complete :minibuffer-open :idle))
-      (let ((snap (or (plist-get event :snapshot)
-                      ;; For events that imply state change but might not have a snapshot attached yet
-                      (and (memq type '(:minibuffer-open :idle))
-                           (flywire-snapshot-get-snapshot)))))
-        (when snap
-          (funcall flywire-async-output-handler snap))))))
+    (when (memq type '(:step-end :exec-complete :exec-cancelled :minibuffer-open :idle))
+      (when-let ((snap (flywire-async--event->snapshot event)))
+        (funcall flywire-async-output-handler snap)))))
 
-(defun flywire-async--enable-monitoring ()
-  "Setup hooks and timers."
-  (add-hook 'minibuffer-setup-hook #'flywire-async--on-minibuffer-setup)
-  ;; Cancel existing timer if any
-  (when flywire-async--idle-timer (cancel-timer flywire-async--idle-timer))
-  ;; Set new idle timer (e.g., 0.5s)
-  (setq flywire-async--idle-timer
-        (run-with-idle-timer 0.5 t #'flywire-async--on-idle))
-  ;; Attach to current session
-  (when (fboundp 'flywire-session-current)
-    (flywire-session-on-event (flywire-session-current) #'flywire-async--session-adapter)))
+(defun flywire-async--attach-session (session)
+  "Register handlers and enable events for SESSION."
+  (unless (gethash session flywire-async--session-handlers)
+    (let ((handler (lambda (event) (flywire-async--session-adapter event))))
+      (puthash session handler flywire-async--session-handlers)
+      (flywire-session-on-event session handler)
+      (flywire-session-enable-events
+       session '(:events (:step-end :exec-complete :exec-cancelled :minibuffer-open :idle))))))
 
-(defun flywire-async--disable-monitoring ()
-  "Teardown hooks and timers."
-  (remove-hook 'minibuffer-setup-hook #'flywire-async--on-minibuffer-setup)
-  (when flywire-async--idle-timer
-    (cancel-timer flywire-async--idle-timer)
-    (setq flywire-async--idle-timer nil))
-  ;; Note: We don't easily unregister the session handler here without more bookkeeping,
-  ;; but for the default session it's acceptable to leave it or we'd need to store the lambda.
-  )
+(defun flywire-async--detach-session (session)
+  "Remove handlers and disable events for SESSION."
+  (when-let ((handler (gethash session flywire-async--session-handlers)))
+    (flywire-session-off-event session handler)
+    (remhash session flywire-async--session-handlers))
+  (flywire-session-disable-events session))
 
 ;;;###autoload
 (define-minor-mode flywire-async-mode
   "Toggle asynchronous monitoring of Emacs state."
   :global t
   :group 'flywire
-  (if flywire-async-mode
-      (flywire-async--enable-monitoring)
-    (flywire-async--disable-monitoring)))
+  (let ((session (flywire-session-current)))
+    (if flywire-async-mode
+        (flywire-async--attach-session session)
+      (flywire-async--detach-session session))))
 
 (provide 'flywire-async)
 ;;; flywire-async.el ends here

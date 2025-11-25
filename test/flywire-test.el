@@ -90,8 +90,23 @@ Line 5
     (should (listp (plist-get result :steps)))
     (should (= (length (plist-get result :steps)) 1))
     (let ((step-res (car (plist-get result :steps))))
-      (should (eq (alist-get :status step-res) :ok))
-      (should (equal (alist-get 'action (alist-get :action step-res)) "type")))))
+      (should (eq (plist-get step-res :status) :ok))
+      (should (equal (alist-get 'action (plist-get step-res :action)) "type")))))
+
+(ert-deftest flywire-session-result-messages-and-snapshots ()
+  "Execution results should include messages and snapshots when requested."
+  (let* ((session (flywire-session-create :snapshot-profile 'minimal)))
+    (flywire-action-register "emit_message" (lambda (_args) (message "step-msg")))
+    (let* ((result (flywire-session-exec session
+                                         '(((action . "emit_message")))
+                                         '(:snapshot-before t :snapshot-after t)))
+           (step (car (plist-get result :steps))))
+      (should (plist-get result :snapshot-before))
+      (should (plist-get result :snapshot-after))
+      (should (plist-get result :snapshot))
+      (should (equal (plist-get result :messages) '("step-msg")))
+      (should (equal (plist-get step :messages) '("step-msg")))
+      (should (plist-get step :snapshot)))))
 
 (ert-deftest flywire-snapshot-profiles ()
   "Snapshot should respect profiles."
