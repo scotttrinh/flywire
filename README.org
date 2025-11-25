@@ -1,28 +1,21 @@
 * flywire
 
-~flywire~ is an Emacs package that serves as the "arms and eyes" for automated agents (such as LLMs) operating within Emacs. It enables external processes to observe the editor's state and execute interactive commands programmatically in the current user session.
+~flywire~ is the "arms and eyes" for automated agents (LLMs, copilots, CI harnesses) driving Emacs. It exposes a session-based API that can observe editor state, run interactive commands, and stream events back to an external controller.
 
-It separates the mechanics of "driving" Emacs from the agent's decision logic, offering a robust, session-based API that handles sync/async execution, environments (interactive vs headless), and structured observation.
+The library separates *how* to drive Emacs (sessions, environments, actions, snapshots) from *why* you're doing it (agent logic). Examples below use an agentic coding flow (open a file, edit, save) but the interface is generic.
 
 * Installation
 
 ** Doom Emacs
 
-Add the following to your ~$DOOMDIR/packages.el~:
-
 #+begin_src elisp
 (package! flywire :recipe (:host github :repo "scotttrinh/flywire"))
 #+end_src
 
-Then run ~doom sync~.
-
-Load it in your ~$DOOMDIR/config.el~:
+Run ~doom sync~, then load it in ~config.el~:
 
 #+begin_src elisp
-(use-package! flywire
-  :config
-  ;; Optional configuration
-  )
+(use-package! flywire)
 #+end_src
 
 ** Straight.el
@@ -34,109 +27,95 @@ Load it in your ~$DOOMDIR/config.el~:
 
 * Core Concepts
 
-Flywire is built around four key concepts:
+- **Sessions**: A `flywire-session` is a driver instance with its own options, event handlers, and async handle tracking.
+- **Environments**: A `flywire-session-env` decides *where* the session runs (current frame, dedicated agent frame, headless buffer). Flywire ships a default env; custom ones belong in your agent/frontend.
+- **Actions**: Tools like `type_text`, `press_key`, `run_command`, `goto_location`, `cancel` plus any custom actions registered in the action registry.
+- **Snapshots**: Structured views of Emacs (buffer content, cursor, minibuffer, windows, messages, processes). Profiles control how much data you collect.
 
-- **Sessions**: A `flywire-session` represents a single driver instance. It holds configuration and state for an agent's interaction loop.
-- **Environments**: A `flywire-env` defines *where* the session runs (e.g., the current frame, a dedicated agent frame, or a headless buffer).
-- **Actions**: Native Emacs commands and special tools (like `type_text` or `goto_location`) that the agent can invoke.
-- **Snapshots**: Structured views of the editor state (buffer content, cursor, windows), configurable via profiles.
+* Quickstart
 
-* Usage
-
-** Basic Execution (Sync)
-
-For simple scripts or REPL usage, you can use `flywire-do` (legacy wrapper) or the session API directly.
+** Sync agentic step (open and edit a file)
 
 #+begin_src elisp
 (require 'flywire)
 
-;; Create a session using the default environment (current frame)
-(let ((session (flywire-session-create)))
-  (flywire-session-exec session
-    '(((action . "type_text") (text . "Hello World"))
-      ((action . "press_key") (key . "RET")))))
+(let* ((session (flywire-session-create :snapshot-profile 'default))
+       (result
+        (flywire-session-exec
+         session
+         '(((action . "run_command") (name . "find-file"))
+           ((action . "type_text") (text . "/tmp/demo.txt"))
+           ((action . "press_key") (key . "RET"))
+           ((action . "goto_location") (line . 10))
+           ((action . "type_text") (text . ";; inserted by agent\n")))
+         '(:snapshot-after t)))))
+  ;; result is a plist: :status, :steps (with per-step snapshots/messages), :snapshot (final)
+  (plist-get result :status))
 #+end_src
 
-** Async Execution & Events
-
-For interactive agents that need to react to minibuffer prompts or idle state, use `flywire-session-start-async`.
+** Async execution with events (react to minibuffer/idle)
 
 #+begin_src elisp
-(defun my-event-handler (event)
+(defun my-agent-handler (event)
   (pcase (plist-get event :type)
-    (:step-end (message "Finished step: %s" (plist-get event :result)))
-    (:minibuffer-open (message "Minibuffer opened! Snapshot: %s" (plist-get event :snapshot)))))
+    (:step-end
+     (message "Finished %s" (plist-get (plist-get event :result) :action)))
+    (:minibuffer-open
+     (message "Prompt: %s"
+              (plist-get (plist-get event :snapshot) :minibuffer)))))
 
-(let ((session (flywire-session-create)))
-  (flywire-session-on-event session #'my-event-handler)
-  (flywire-session-start-async session
-    '(((action . "run_command") (name . "find-file"))
-      ((action . "type_text") (text . "/tmp/test.txt"))
-      ((action . "press_key") (key . "RET")))))
+(let ((session (flywire-session-create :snapshot-profile 'minimal)))
+  (flywire-session-on-event session #'my-agent-handler)
+  ;; enable default minibuffer/idle events in the current frame
+  (flywire-session-enable-events session)
+  (let ((handle
+         (flywire-session-start-async
+          session
+          '(((action . "run_command") (name . "execute-extended-command"))
+            ((action . "type_text") (text . "save-buffer"))
+            ((action . "press_key") (key . "RET"))))))
+    ;; cancel if needed
+    ;; (flywire-session-cancel session handle :reason "agent requested stop")
+    handle))
 #+end_src
 
 * Configuration
 
-** Snapshot Profiles
+** Snapshot profiles and extensions
 
-Snapshots can be expensive. Use profiles to control data volume.
+- Profiles: `minimal`, `default`, `rich` (see `flywire-snapshot-profiles`). Supply `:snapshot-profile` when creating a session.
+- Extend snapshots via `flywire-snapshot-collect-hook` to add agent-specific data.
 
-#+begin_src elisp
-;; Use the 'minimal' profile for low-latency checks
-(flywire-snapshot-get-snapshot 'minimal)
+** Safety policy
 
-;; Use 'rich' for full context (includes visible content, messages, etc.)
-(flywire-snapshot-get-snapshot 'rich)
-#+end_src
-
-Define your own profiles in `flywire-snapshot-profiles`.
-
-** Snapshot Extensions
-
-Add custom data to snapshots using `flywire-snapshot-collect-hook`.
+Gate interactive commands with `flywire-policy-allow-command-p` or a per-session override:
 
 #+begin_src elisp
-(add-hook 'flywire-snapshot-collect-hook
-          (lambda (snap)
-            (plist-put snap :my-custom-field "some data")))
+(setq flywire-policy-allow-command-p
+      (lambda (cmd) (memq cmd '(find-file save-buffer))))
+
+(flywire-session-create
+ :safety-policy (lambda (cmd) (not (memq cmd '(delete-file kill-emacs)))))
 #+end_src
 
-** Safety Policy
+** Action registry
 
-Restrict which commands an agent can run using `flywire-allow-command-p`.
+Register custom tools (string tool names, plist args):
 
 #+begin_src elisp
-(setq flywire-allow-command-p
-      (lambda (cmd)
-        (memq cmd '(next-line previous-line self-insert-command))))
+(flywire-action-register
+ "run_tests"
+ (lambda (args)
+   (message "Run tests with opts: %S" args)))
 #+end_src
 
-* Action Registry
+* Status and gaps for agentic coding
 
-Flywire maps string-based tool names to Emacs functions. Standard tools include:
+- Sessions, environments, action registry, structured sync/async results, cancellation, and default minibuffer/idle events are implemented and covered by tests.
+- The default environment targets the current frame; dedicated-frame or headless envs are expected to be provided by consuming packages (documentation/examples still to be written).
 
-- `type_text`: Insert text.
-- `press_key`: Simulate key chords (`RET`, `C-c C-c`).
-- `run_command`: Execute interactive commands.
-- `cancel`: Simulate `C-g`.
-- `goto_location`: Jump to point/line/column.
+* Contributing
 
-Register custom actions:
-
-#+begin_src elisp
-(flywire-register-action "my_tool"
-  (lambda (args)
-    (message "Tool called with: %s" args)))
-#+end_src
-
-* Development
-
-** Testing
-
-Run the full test suite with Nix:
-
-#+begin_src sh
-nix run .#test
-#+end_src
-
-See [[file:AGENT.md][AGENT.md]] for contribution guidelines.
+- Tests: ~nix run .#test~ (uses batch Emacs).
+- Style: keep prefixes (`flywire-*`), prefer plists and string tool names, and include tests for new actions or env behavior.
+- PRs/issues: describe the agent workflow you’re enabling (e.g., dedicated-frame driver, CI headless run) so we can align environments and events.
