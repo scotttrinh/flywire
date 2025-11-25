@@ -7,6 +7,7 @@
 ;;; Code:
 
 (require 'flywire)
+(require 'flywire-test-helpers)
 
 (ert-deftest flywire-snapshot-structure ()
   "Snapshot should return expected structure."
@@ -233,7 +234,7 @@ Line 3")
         (flywire-action-run-command '(("name" . "ignore")))
       (error
        (should (string-search "command denied" (error-message-string err))))))
-  
+
   ;; Allow specific command policy
   (let ((flywire-allow-command-p (lambda (cmd) (eq cmd 'ignore))))
     ;; Allowed

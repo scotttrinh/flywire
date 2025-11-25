@@ -1,0 +1,19 @@
+* Devlog: Test Helper Cleanup and Async Session Follow-through
+
+:DATE: 2025-11-25T10:45-0500
+
+** What changed
+- Finished the async/session refactor from the policy-module follow-up:
+  - Async now returns handles, supports cancellation, and emits structured events in env context.
+  - Execution results include per-step messages/snapshots and honor snapshot-before/after and safety-policy opts.
+  - Default env wiring now installs minibuffer/idle events via the session env.
+- Updated tests to use the new shapes and helpers; reintroduced `flywire-test-with-bindings` only where async cleanup is needed and kept sync tests on simple bindings.
+- Added `load-path` setup for test helpers so batch runs can find shared utilities.
+
+** Challenges & deviations
+- The binding helper assumed an async `done` callback; using it in sync tests broke with unbound `ignore`/mismatched arity. Resolved by reverting sync tests to plain `let`/`setq` and keeping the helper for async tests only.
+- Early edits introduced paren and setf macro errors in `flywire-session-start-async`; fixed and re-ran `nix run .#test` multiple times to ensure green runs.
+
+** Status
+- Test suite passes (`nix run .#test`).
+- Async/session surfaces now aligned with the review follow-up; remaining work would be docs/examples for environments if needed.

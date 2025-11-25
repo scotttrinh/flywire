@@ -2,25 +2,30 @@
 
 (require 'propcheck)
 (require 'flywire)
+(require 'flywire-test-helpers)
 
 (propcheck-deftest flywire-prop-push-input ()
   "Pushing any ASCII string input should queue corresponding events."
-  (let ((s (propcheck-generate-string "input")))
-    (setq unread-command-events nil)
-    (flywire-action-push-input s)
-    (let ((expected (string-to-list s)))
-      (propcheck-should (equal unread-command-events expected)))))
+  (let ((done #'ignore))
+    (flywire-test-with-bindings done ((unread-command-events nil))
+      (let ((s (propcheck-generate-string "input")))
+        (flywire-action-push-input s)
+        (let ((expected (string-to-list s)))
+          (propcheck-should (equal unread-command-events expected))))
+      (funcall done))))
 
 (propcheck-deftest flywire-prop-simulate-keys-simple ()
   "Simulating simple alphanumeric strings should behave like typing."
-  (let ((s (propcheck-generate-string "keys")))
-    ;; Only keep alphanumeric chars to ensure valid key sequence
-    (setq s (replace-regexp-in-string "[^a-zA-Z0-9]" "" s))
-    (when (not (string-empty-p s))
-      (setq unread-command-events nil)
-      (flywire-action-simulate-keys s)
-      (let ((expected (listify-key-sequence (kbd s))))
-        (propcheck-should (equal unread-command-events expected))))))
+  (let ((done #'ignore))
+    (flywire-test-with-bindings done ((unread-command-events nil))
+      (let ((s (propcheck-generate-string "keys")))
+        ;; Only keep alphanumeric chars to ensure valid key sequence
+        (setq s (replace-regexp-in-string "[^a-zA-Z0-9]" "" s))
+        (when (not (string-empty-p s))
+          (flywire-action-simulate-keys s)
+          (let ((expected (listify-key-sequence (kbd s))))
+            (propcheck-should (equal unread-command-events expected)))))
+      (funcall done))))
 
 (ert-deftest flywire-snapshot-content-empty-buffer ()
   "Snapshot of empty buffer should be empty string."
@@ -211,4 +216,3 @@
 
 (provide 'test/flywire-property-test)
 ;;; test/flywire-property-test.el ends here
-
