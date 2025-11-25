@@ -35,15 +35,31 @@
 
 (require 'cl-lib)
 (require 'json)
+(require 'flywire-policy)
 (require 'flywire-snapshot)
 (require 'flywire-action)
 (require 'flywire-session)
 (require 'flywire-async)
 
+;; Global aliases to match public API naming and legacy references.
+(defvaralias 'flywire-allow-command-p 'flywire-policy-allow-command-p)
+(defvaralias 'flywire-action-allow-command-p 'flywire-policy-allow-command-p)
+
 (defgroup flywire nil
   "Arms and eyes for automated agents."
   :group 'tools
   :prefix "flywire-")
+
+(defun flywire--allow-all (_command)
+  "Default safety policy: allow all commands.
+_COMMAND is the command symbol being checked."
+  t)
+
+(defcustom flywire-allow-command-p #'flywire--allow-all
+  "Predicate to decide whether a command may be run.
+Called with one argument, the command symbol."
+  :group 'flywire
+  :type 'function)
 
 ;;; Shims (Backward Compatibility)
 

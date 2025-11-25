@@ -33,6 +33,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'flywire-policy)
 
 (defun flywire-action-simulate-keys (key-sequence)
   "Push KEY-SEQUENCE (e.g., \"\\<global-map>\\[find-file]\", \"RET\") into `unread-command-events'."
@@ -53,17 +54,6 @@
       (setq unread-command-events
             (append unread-command-events
                     (string-to-list input-string))))))
-
-(defun flywire-action--allow-all (_command)
-  "Default safety policy: allow all commands.
-_COMMAND is the command symbol being checked."
-  t)
-
-(defcustom flywire-action-allow-command-p #'flywire-action--allow-all
-  "Predicate to decide whether a command may be run.
-Called with one argument, the command symbol."
-  :group 'flywire
-  :type 'function)
 
 (defvar flywire-action-registry (make-hash-table :test 'equal)
   "Registry of available action tools.")
@@ -92,7 +82,7 @@ ARGS is an alist containing the command name."
     (cond
      ((not (and sym (commandp sym)))
       (error "Flywire: invalid command %s" command-name))
-     ((not (funcall flywire-action-allow-command-p sym))
+     ((not (funcall flywire-policy-allow-command-p sym))
       (error "Flywire: command denied by policy: %s" command-name))
      (t
       (call-interactively sym)))))

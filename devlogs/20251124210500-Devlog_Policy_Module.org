@@ -1,0 +1,42 @@
+* Devlog: Safety Policy Module and Review Follow-through
+
+:DATE: 2025-11-24T21:05-0500
+
+** What prompted this change
+- Code review flagged that safety policy was global, ambiguously named, and hard to scope per session/environment.
+- Linting pain: we were relying on ambient `defvar` stubs to dodge require cycles, which is brittle and unidiomatic.
+
+** Other review issues (deferred)
+- Step decoding brittle: `flywire-session--execute-step` expected string keys only; symbol keys from tests/docs would error. Fixed now, but worth re-checking coverage.
+- Async execution uses `env-run` only around timer scheduling; the timer body runs outside env context (wrong frame/buffer for dedicated envs) and lacks cancellation/result handles.
+- Structured results are thin: per-step results are alists with only `:status`, no per-step errors/snapshots, messages are a single string blob, options (`:snapshot-before/after`, `:events`, `:safety-policy`) mostly ignored.
+- Event model is still coarse/global: no minibuffer/idle events scoped per session/env, `flywire-async-mode` installs global hooks and doesn’t tear down handlers cleanly.
+- Acceptance gaps: no `flywire-session-cancel`, no structured error/cancel events, no headless/dedicated-frame env examples, default events don’t include minibuffer/idle snapshots.
+
+** What we did
+- Added `flywire-policy.el` to own the global safety predicate:
+  - `flywire-policy-allow-command-p` (defcustom) defaults to allow-all.
+  - Aliases wired in `flywire.el` so public names (`flywire-allow-command-p`, legacy `flywire-action-allow-command-p`) stay intact without cycles.
+- Updated `flywire-action` and `flywire-session` to depend on the policy module and to bind the session-specific policy via `flywire-session--resolve-safety-policy` for both sync and async execution.
+- Broke the require cycle and removed ambient `defvar` hacks; `nix run .#lint` now passes.
+- Kept tests green; safety tests cover both deny and allow paths with session overrides.
+
+** Why this is better
+- Clear ownership: policy lives in one module; action/session just consume it.
+- Session overrides are still respected, but globals are explicit and customizable.
+- Lint/byte-compile no longer rely on implicit vars, reducing surprise regressions.
+
+** Next ideas for `flywire-policy`
+- Per-session/environment allowlists/denylists (e.g., limit to navigation/edit commands in a headless test env).
+- Path-aware policies (deny writes outside project root; gate `find-file` to specific dirs).
+- Policy hooks for side-effecting tools beyond `run_command` (e.g., future refactor tools or shell commands).
+- Structured denial reasons (e.g., `:policy "command-not-allowed"` in step results/events).
+- Rate limiting/throttling knobs if agents spam commands.
+- Presets (e.g., `flywire-policy-strict`, `flywire-policy-readonly`) for quick configuration in tests/CI.
+
+** Follow-up tasks (from review)
+- Rework async to run inside env context (timer body wrapped in `env-run`), return a handle, and support cancellation; emit structured events with results/errors/snapshots.
+- Expand structured results to include per-step errors/snapshots, list-of-messages, and honor options (`:snapshot-before/after`, session `:snapshot-profile`).
+- Move event wiring behind envs (`enable-events`) and make `flywire-async-mode` register/unregister per-session handlers; add minibuffer/idle events.
+- Add `flywire-session-cancel` and structured cancel/error events.
+- Provide env examples (headless, dedicated frame) and align tests/docs to the session/env model.

@@ -213,14 +213,14 @@ Line 3")
 (ert-deftest flywire-action-safety-policy ()
   "Safety policy should allow or deny commands."
   ;; Deny all commands policy
-  (let ((flywire-action-allow-command-p (lambda (_cmd) nil)))
+  (let ((flywire-allow-command-p (lambda (_cmd) nil)))
     (condition-case err
         (flywire-action-run-command '(("name" . "ignore")))
       (error
        (should (string-search "command denied" (error-message-string err))))))
   
   ;; Allow specific command policy
-  (let ((flywire-action-allow-command-p (lambda (cmd) (eq cmd 'ignore))))
+  (let ((flywire-allow-command-p (lambda (cmd) (eq cmd 'ignore))))
     ;; Allowed
     (should (progn (flywire-action-run-command '(("name" . "ignore"))) t))
     ;; Denied
@@ -228,6 +228,21 @@ Line 3")
         (flywire-action-run-command '(("name" . "next-line")))
       (error
        (should (string-search "command denied" (error-message-string err)))))))
+
+(ert-deftest flywire-session-safety-policy ()
+  "Session :safety-policy should override the global predicate."
+  (let ((flywire-allow-command-p (lambda (_cmd) t)))
+    ;; Deny via session policy
+    (let* ((session (flywire-session-create :safety-policy (lambda (_cmd) nil)))
+           (result (flywire-session-exec session '(((action . "command") (name . "next-line"))))))
+      (should (eq (plist-get result :status) :error)))
+    ;; Allow via session policy (and ensure the command runs in a buffer with enough lines)
+    (with-temp-buffer
+      (insert "line1\nline2\n")
+      (goto-char (point-min))
+      (let* ((session (flywire-session-create :safety-policy (lambda (cmd) (eq cmd 'next-line))))
+             (result (flywire-session-exec session '(((action . "command") (name . "next-line"))))))
+        (should (eq (plist-get result :status) :ok))))))
 
 (provide 'test/flywire-test)
 ;;; test/flywire-test.el ends here

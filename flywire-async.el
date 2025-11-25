@@ -34,6 +34,7 @@
 
 (require 'flywire-snapshot)
 (require 'flywire-session)
+(require 'flywire-policy)
 (require 'json)
 
 (defcustom flywire-async-output-handler #'flywire-async-default-output-handler
